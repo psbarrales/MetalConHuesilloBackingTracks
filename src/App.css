@@ -110,6 +110,13 @@
   width: 100%;
 }
 
+.transpose-hint {
+  color: #d4b9a6;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
 .song-selector select,
 .tempo-selector input {
   border-radius: 11px;

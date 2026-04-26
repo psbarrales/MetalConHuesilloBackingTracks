@@ -13,6 +13,8 @@ const PREFERRED_MASTER = 'voz'
 
 const MIN_BPM = 40
 const MAX_BPM = 220
+const MIN_SEMITONES = -6
+const MAX_SEMITONES = 6
 const READY_STATE_ENOUGH_DATA = 4
 const TRACK_READY_TIMEOUT_MS = 15000
 const LAST_SONG_STORAGE_KEY = 'backingtrack:last-song-id'
@@ -26,6 +28,19 @@ function computePlaybackRate(baseBpm, targetBpm) {
   const safeBase = clampBpm(baseBpm)
   const safeTarget = clampBpm(targetBpm)
   return safeTarget / safeBase
+}
+
+function clampSemitones(value) {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(MAX_SEMITONES, Math.max(MIN_SEMITONES, Math.round(value)))
+}
+
+function semitonesToRate(semitones) {
+  return 2 ** (semitones / 12)
+}
+
+function isTonalTrack(trackId) {
+  return trackId === 'voz' || trackId === 'guitarra' || trackId === 'bajo'
 }
 
 function waitForTrackReady(audio, timeoutMs = TRACK_READY_TIMEOUT_MS) {
@@ -70,6 +85,20 @@ function applyTrackOutput(audio, isMuted, volume) {
   audio.volume = isMuted ? 0 : volume
 }
 
+function applyTrackPitchBehavior(audio, trackId, pitchSemitones) {
+  const shouldKeepPitch = !isTonalTrack(trackId) || pitchSemitones === 0
+
+  if ('preservesPitch' in audio) {
+    audio.preservesPitch = shouldKeepPitch
+  }
+  if ('webkitPreservesPitch' in audio) {
+    audio.webkitPreservesPitch = shouldKeepPitch
+  }
+  if ('mozPreservesPitch' in audio) {
+    audio.mozPreservesPitch = shouldKeepPitch
+  }
+}
+
 export function useMultiTrackPlayer(songRepository) {
   const songs = useMemo(() => songRepository.listSongs(), [songRepository])
   const [currentSongId, setCurrentSongId] = useState(() => {
@@ -90,6 +119,7 @@ export function useMultiTrackPlayer(songRepository) {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [targetBpm, setTargetBpm] = useState(() => clampBpm(songs[0]?.bpm ?? 120))
+  const [pitchSemitones, setPitchSemitones] = useState(0)
   const [volume, setVolume] = useState(0.9)
   const [muteState, setMuteState] = useState(buildInitialMuteState)
   const [loadedTracks, setLoadedTracks] = useState({})
@@ -145,15 +175,26 @@ export function useMultiTrackPlayer(songRepository) {
 
   const baseBpm = clampBpm(currentSong?.bpm ?? 120)
   const effectiveTargetBpm = clampBpm(targetBpm)
-  const playbackRate = useMemo(
+  const tempoPlaybackRate = useMemo(
     () => computePlaybackRate(baseBpm, effectiveTargetBpm),
     [baseBpm, effectiveTargetBpm],
   )
+  const effectivePitchSemitones = useMemo(() => clampSemitones(pitchSemitones), [pitchSemitones])
+  const pitchRate = useMemo(() => semitonesToRate(effectivePitchSemitones), [effectivePitchSemitones])
+  const playbackRate = useMemo(() => tempoPlaybackRate * pitchRate, [tempoPlaybackRate, pitchRate])
+  const metronomeBpm = useMemo(() => effectiveTargetBpm * pitchRate, [effectiveTargetBpm, pitchRate])
 
   const updateTargetBpm = useCallback((nextBpm) => {
     setTargetBpm((prev) => {
       if (!Number.isFinite(nextBpm)) return prev
       return clampBpm(nextBpm)
+    })
+  }, [])
+
+  const updatePitchSemitones = useCallback((nextSemitones) => {
+    setPitchSemitones((prev) => {
+      if (!Number.isFinite(nextSemitones)) return prev
+      return clampSemitones(nextSemitones)
     })
   }, [])
 
@@ -209,6 +250,7 @@ export function useMultiTrackPlayer(songRepository) {
       const audio = new Audio()
       audio.preload = 'auto'
       applyTrackOutput(audio, muteStateRef.current[trackId] ?? true, volumeRef.current)
+      applyTrackPitchBehavior(audio, trackId, effectivePitchSemitones)
       audio.playbackRate = playbackRateRef.current
       audio.src = `/audio/${currentSong.slug}/${trackId}.mp3`
 
@@ -262,7 +304,7 @@ export function useMultiTrackPlayer(songRepository) {
     }
     // Solo se recrea cuando cambia la canción
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSong?.id])
+  }, [currentSong?.id, effectivePitchSemitones])
 
   // ─── Propaga cambios de volumen (gain por pista) ──────────────────────────
   useEffect(() => {
@@ -282,12 +324,16 @@ export function useMultiTrackPlayer(songRepository) {
       audio.playbackRate = playbackRate
     }
 
+    for (const [trackId, audio] of Object.entries(elements)) {
+      applyTrackPitchBehavior(audio, trackId, effectivePitchSemitones)
+    }
+
     if (isPlayingRef.current) {
       metronomeEngine.stop()
       const metronomePosition = mediaPosition / playbackRate
-      metronomeEngine.start(effectiveTargetBpm, metronomePosition)
+      metronomeEngine.start(metronomeBpm, metronomePosition)
     }
-  }, [effectiveTargetBpm, playbackRate])
+  }, [effectivePitchSemitones, metronomeBpm, playbackRate])
 
   // ─── Loop de seguimiento de tiempo + corrección de deriva ─────────────────
   const syncSlaveTracks = useCallback((thresholdS) => {
@@ -371,7 +417,7 @@ export function useMultiTrackPlayer(songRepository) {
     }
     setIsPreparingPlayback(false)
 
-    const bpm = effectiveTargetBpm
+    const bpm = metronomeBpm
     const masterAudio = elements[masterIdRef.current]
     const position = masterAudio?.currentTime ?? 0
     const isFromStart = position < 0.1
@@ -418,7 +464,7 @@ export function useMultiTrackPlayer(songRepository) {
         setIsPlaying(false)
       }
     }
-  }, [effectiveTargetBpm, isPlaying, startTimeTracking, stopTimeTracking])
+  }, [isPlaying, metronomeBpm, startTimeTracking, stopTimeTracking])
 
   const seekTo = useCallback((time) => {
     for (const audio of Object.values(audioElementsRef.current)) {
@@ -426,12 +472,12 @@ export function useMultiTrackPlayer(songRepository) {
     }
     setCurrentTime(time)
     if (isPlayingRef.current) {
-      const bpm = effectiveTargetBpm
+      const bpm = metronomeBpm
       metronomeEngine.stop()
       const metronomePosition = time / playbackRateRef.current
       metronomeEngine.start(bpm, metronomePosition)
     }
-  }, [effectiveTargetBpm])
+  }, [metronomeBpm])
 
   const seekBy = useCallback(
     (delta) => {
@@ -468,6 +514,7 @@ export function useMultiTrackPlayer(songRepository) {
     countIn,
     baseBpm,
     targetBpm: effectiveTargetBpm,
+    pitchSemitones: effectivePitchSemitones,
     playbackRate,
     currentTime,
     duration,
@@ -479,6 +526,7 @@ export function useMultiTrackPlayer(songRepository) {
     seekTo,
     seekBy,
     setTargetBpm: updateTargetBpm,
+    setPitchSemitones: updatePitchSemitones,
     setVolume,
     toggleMute,
   }

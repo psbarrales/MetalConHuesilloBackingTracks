@@ -20,6 +20,7 @@ function App() {
     countIn,
     baseBpm,
     targetBpm,
+    pitchSemitones,
     currentTime,
     duration,
     volume,
@@ -30,6 +31,7 @@ function App() {
     seekTo,
     seekBy,
     setTargetBpm,
+    setPitchSemitones,
     setVolume,
     toggleMute,
   } = useMultiTrackPlayer(inMemorySongRepository)
@@ -84,6 +86,21 @@ function App() {
                 value={targetBpm}
                 onChange={(event) => setTargetBpm(Number(event.target.value))}
               />
+            </label>
+
+            <label className="tempo-selector">
+              Transposición (semitonos)
+              <input
+                type="number"
+                min="-6"
+                max="6"
+                step="1"
+                value={pitchSemitones}
+                onChange={(event) => setPitchSemitones(Number(event.target.value))}
+              />
+              <small className="transpose-hint">
+                Afecta voz, guitarra y bajo. Batería mantiene su pitch.
+              </small>
             </label>
           </div>
         </div>
