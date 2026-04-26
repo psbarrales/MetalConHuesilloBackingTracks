@@ -49,17 +49,31 @@ class MetronomeEngine {
     this._muted = true
   }
 
-  _ensure() {
+  _ensure({ resume = true } = {}) {
     if (!this._ctx || this._ctx.state === 'closed') {
       this._ctx = new (window.AudioContext || window.webkitAudioContext)()
       this._masterGain = this._ctx.createGain()
       this._masterGain.gain.value = this._muted ? 0 : 1
       this._masterGain.connect(this._ctx.destination)
     }
-    if (this._ctx.state === 'suspended') {
+    if (resume && this._ctx.state === 'suspended') {
       this._ctx.resume()
     }
     return this._ctx
+  }
+
+  /**
+   * Intenta desbloquear el AudioContext tras un gesto del usuario.
+   */
+  async unlock() {
+    const ctx = this._ensure({ resume: false })
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+      } catch {
+        // Ignora: el navegador puede seguir bloqueando hasta otro gesto válido.
+      }
+    }
   }
 
   _loop() {
@@ -76,7 +90,6 @@ class MetronomeEngine {
   /** Silencia o activa el metrónomo sin detenerlo. */
   setMuted(muted) {
     this._muted = muted
-    this._ensure()
     if (this._masterGain) {
       this._masterGain.gain.value = muted ? 0 : 1
     }

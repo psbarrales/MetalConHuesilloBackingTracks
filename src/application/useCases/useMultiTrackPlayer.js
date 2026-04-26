@@ -17,6 +17,7 @@ const MIN_SEMITONES = -6
 const MAX_SEMITONES = 6
 const READY_STATE_ENOUGH_DATA = 4
 const TRACK_READY_TIMEOUT_MS = 15000
+const METRONOME_PROBE_TIMEOUT_MS = 2500
 const LAST_SONG_STORAGE_KEY = 'backingtrack:last-song-id'
 
 function clampBpm(value) {
@@ -72,6 +73,41 @@ function waitForTrackReady(audio, timeoutMs = TRACK_READY_TIMEOUT_MS) {
     audio.addEventListener('canplaythrough', onReady, { once: true })
     audio.addEventListener('error', onError, { once: true })
     audio.load()
+  })
+}
+
+function probeAudioTrack(url, timeoutMs = METRONOME_PROBE_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    const probe = new Audio()
+    let settled = false
+
+    const cleanup = () => {
+      clearTimeout(timeout)
+      probe.removeEventListener('loadedmetadata', onReady)
+      probe.removeEventListener('canplaythrough', onReady)
+      probe.removeEventListener('error', onError)
+      probe.pause()
+      probe.src = ''
+    }
+
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(result)
+    }
+
+    const onReady = () => finish(true)
+    const onError = () => finish(false)
+
+    const timeout = setTimeout(() => finish(false), timeoutMs)
+
+    probe.preload = 'metadata'
+    probe.addEventListener('loadedmetadata', onReady, { once: true })
+    probe.addEventListener('canplaythrough', onReady, { once: true })
+    probe.addEventListener('error', onError, { once: true })
+    probe.src = url
+    probe.load()
   })
 }
 
@@ -134,6 +170,7 @@ export function useMultiTrackPlayer(songRepository) {
   const isCountingInRef = useRef(false)
   const countInTimersRef = useRef([])
   const syncIntervalRef = useRef(null)
+  const useAudioMetronomeRef = useRef(false)
 
   const muteStateRef = useRef(muteState)
   const volumeRef = useRef(volume)
@@ -212,6 +249,9 @@ export function useMultiTrackPlayer(songRepository) {
 
   // ─── Crea / recrea los elementos <audio> al cambiar de canción ─────────────
   useEffect(() => {
+    let cancelled = false
+
+    const initSongAudios = async () => {
     if (!currentSong) return
 
     setTargetBpm(clampBpm(currentSong.bpm ?? 120))
@@ -235,6 +275,7 @@ export function useMultiTrackPlayer(songRepository) {
     setCurrentTime(0)
     setDuration(0)
     setLoadedTracks({})
+    useAudioMetronomeRef.current = false
     metronomeEngine.setMuted(muteStateRef.current.metronomo ?? true)
 
     const elements = {}
@@ -243,16 +284,25 @@ export function useMultiTrackPlayer(songRepository) {
       : currentSong.tracks.find((t) => !TRACK_TYPE_BY_ID[t]?.synthetic) ?? currentSong.tracks[0]
     masterIdRef.current = masterId
 
+    const metronomeTrackUrl = `/audio/${currentSong.slug}/metronomo.mp3`
+    const hasMetronomeAudio = currentSong.tracks.includes('metronomo')
+      ? await probeAudioTrack(metronomeTrackUrl)
+      : false
+
+    if (cancelled) return
+    useAudioMetronomeRef.current = hasMetronomeAudio
+
     for (const trackId of currentSong.tracks) {
-      // Los tracks sintéticos (metrónomo) no tienen archivo de audio
-      if (TRACK_TYPE_BY_ID[trackId]?.synthetic) continue
+      // Usa metrónomo sintético solo si no existe archivo metronomo.mp3.
+      if (trackId === 'metronomo' && !hasMetronomeAudio) continue
+      if (trackId !== 'metronomo' && TRACK_TYPE_BY_ID[trackId]?.synthetic) continue
 
       const audio = new Audio()
       audio.preload = 'auto'
       applyTrackOutput(audio, muteStateRef.current[trackId] ?? true, volumeRef.current)
       applyTrackPitchBehavior(audio, trackId, effectivePitchSemitones)
       audio.playbackRate = playbackRateRef.current
-      audio.src = `/audio/${currentSong.slug}/${trackId}.mp3`
+      audio.src = trackId === 'metronomo' ? metronomeTrackUrl : `/audio/${currentSong.slug}/${trackId}.mp3`
 
       audio.addEventListener(
         'loadedmetadata',
@@ -290,13 +340,23 @@ export function useMultiTrackPlayer(songRepository) {
 
     audioElementsRef.current = elements
 
+    if (hasMetronomeAudio) {
+      setLoadedTracks((prev) => ({ ...prev, metronomo: true }))
+    }
+
+    }
+
+    initSongAudios()
+
     return () => {
+      cancelled = true
       for (const t of countInTimersRef.current) clearTimeout(t)
       countInTimersRef.current = []
       cancelAnimationFrame(animFrameRef.current)
       clearInterval(syncIntervalRef.current)
       metronomeEngine.stop()
-      for (const audio of Object.values(elements)) {
+      useAudioMetronomeRef.current = false
+      for (const audio of Object.values(audioElementsRef.current)) {
         audio.pause()
         audio.src = ''
       }
@@ -328,7 +388,7 @@ export function useMultiTrackPlayer(songRepository) {
       applyTrackPitchBehavior(audio, trackId, effectivePitchSemitones)
     }
 
-    if (isPlayingRef.current) {
+    if (isPlayingRef.current && !useAudioMetronomeRef.current) {
       metronomeEngine.stop()
       const metronomePosition = mediaPosition / playbackRate
       metronomeEngine.start(metronomeBpm, metronomePosition)
@@ -398,7 +458,7 @@ export function useMultiTrackPlayer(songRepository) {
 
     if (isPlaying) {
       for (const audio of Object.values(elements)) audio.pause()
-      metronomeEngine.stop()
+      if (!useAudioMetronomeRef.current) metronomeEngine.stop()
       stopTimeTracking()
       setIsPlaying(false)
       setIsPreparingPlayback(false)
@@ -418,11 +478,16 @@ export function useMultiTrackPlayer(songRepository) {
     setIsPreparingPlayback(false)
 
     const bpm = metronomeBpm
+    const useAudioMetronome = useAudioMetronomeRef.current
     const masterAudio = elements[masterIdRef.current]
     const position = masterAudio?.currentTime ?? 0
     const isFromStart = position < 0.1
 
-    if (isFromStart) {
+    if (!useAudioMetronome) {
+      await metronomeEngine.unlock()
+    }
+
+    if (isFromStart && !useAudioMetronome) {
       // ── Cuenta regresiva ────────────────────────────────────────────────
       isCountingInRef.current = true
       const { delayMs, beatTimingsMs } = metronomeEngine.countIn(bpm, 4)
@@ -455,8 +520,10 @@ export function useMultiTrackPlayer(songRepository) {
       for (const audio of Object.values(elements)) audio.currentTime = position
       try {
         await Promise.all(Object.values(elements).map((a) => a.play()))
-        const metronomePosition = position / playbackRateRef.current
-        metronomeEngine.start(bpm, metronomePosition)
+        if (!useAudioMetronome) {
+          const metronomePosition = position / playbackRateRef.current
+          metronomeEngine.start(bpm, metronomePosition)
+        }
         startTimeTracking()
         setIsPlaying(true)
       } catch (err) {
@@ -473,9 +540,11 @@ export function useMultiTrackPlayer(songRepository) {
     setCurrentTime(time)
     if (isPlayingRef.current) {
       const bpm = metronomeBpm
-      metronomeEngine.stop()
-      const metronomePosition = time / playbackRateRef.current
-      metronomeEngine.start(bpm, metronomePosition)
+      if (!useAudioMetronomeRef.current) {
+        metronomeEngine.stop()
+        const metronomePosition = time / playbackRateRef.current
+        metronomeEngine.start(bpm, metronomePosition)
+      }
     }
   }, [metronomeBpm])
 
@@ -493,7 +562,9 @@ export function useMultiTrackPlayer(songRepository) {
     if (trackId === 'metronomo') {
       setMuteState((prev) => {
         const newMuted = !prev[trackId]
-        metronomeEngine.setMuted(newMuted)
+        if (!useAudioMetronomeRef.current) {
+          metronomeEngine.setMuted(newMuted)
+        }
         return { ...prev, [trackId]: newMuted }
       })
     } else {
