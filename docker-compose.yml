@@ -1,0 +1,9 @@
+services:
+  backing-tracking-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: backing-tracking-web
+    ports:
+      - "8080:80"
+    restart: unless-stopped
