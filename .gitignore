@@ -23,12 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Audio files (large assets, manage separately)
-public/audio/**/*.mp3
-public/audio/**/*.wav
-public/audio/**/*.ogg
-public/audio/**/*.flac
-
 # Environment
 .env
 .env.*
