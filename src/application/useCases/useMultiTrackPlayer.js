@@ -5,6 +5,8 @@ import { metronomeEngine } from '../../domain/services/MetronomeEngine'
 
 /** Deriva mayor a este umbral activa la corrección de sincronía */
 const SYNC_THRESHOLD_S = 0.12
+const HARD_RESYNC_THRESHOLD_S = 0.2
+const RESYNC_INTERVAL_MS = 1000
 
 /** Pista que actúa como reloj maestro (se prefiere 'voz') */
 const PREFERRED_MASTER = 'voz'
@@ -62,6 +64,12 @@ function buildInitialMuteState() {
   return Object.fromEntries(TRACK_TYPES.map((t) => [t.id, t.defaultMuted]))
 }
 
+function applyTrackOutput(audio, isMuted, volume) {
+  // `muted` es más confiable en iOS/Android que depender solo de `volume = 0`.
+  audio.muted = Boolean(isMuted)
+  audio.volume = isMuted ? 0 : volume
+}
+
 export function useMultiTrackPlayer(songRepository) {
   const songs = useMemo(() => songRepository.listSongs(), [songRepository])
   const [currentSongId, setCurrentSongId] = useState(() => {
@@ -95,6 +103,7 @@ export function useMultiTrackPlayer(songRepository) {
   const isPlayingRef = useRef(false)
   const isCountingInRef = useRef(false)
   const countInTimersRef = useRef([])
+  const syncIntervalRef = useRef(null)
 
   const muteStateRef = useRef(muteState)
   const volumeRef = useRef(volume)
@@ -171,6 +180,7 @@ export function useMultiTrackPlayer(songRepository) {
     countInTimersRef.current = []
     isCountingInRef.current = false
     cancelAnimationFrame(animFrameRef.current)
+    clearInterval(syncIntervalRef.current)
     metronomeEngine.stop()
 
     for (const audio of Object.values(audioElementsRef.current)) {
@@ -198,7 +208,7 @@ export function useMultiTrackPlayer(songRepository) {
 
       const audio = new Audio()
       audio.preload = 'auto'
-      audio.volume = (muteStateRef.current[trackId] ?? true) ? 0 : volumeRef.current
+      applyTrackOutput(audio, muteStateRef.current[trackId] ?? true, volumeRef.current)
       audio.playbackRate = playbackRateRef.current
       audio.src = `/audio/${currentSong.slug}/${trackId}.mp3`
 
@@ -242,6 +252,7 @@ export function useMultiTrackPlayer(songRepository) {
       for (const t of countInTimersRef.current) clearTimeout(t)
       countInTimersRef.current = []
       cancelAnimationFrame(animFrameRef.current)
+      clearInterval(syncIntervalRef.current)
       metronomeEngine.stop()
       for (const audio of Object.values(elements)) {
         audio.pause()
@@ -257,7 +268,7 @@ export function useMultiTrackPlayer(songRepository) {
   useEffect(() => {
     for (const [trackId, audio] of Object.entries(audioElementsRef.current)) {
       const isMuted = muteState[trackId] ?? true
-      audio.volume = isMuted ? 0 : volume
+      applyTrackOutput(audio, isMuted, volume)
     }
   }, [muteState, volume])
 
@@ -279,29 +290,51 @@ export function useMultiTrackPlayer(songRepository) {
   }, [effectiveTargetBpm, playbackRate])
 
   // ─── Loop de seguimiento de tiempo + corrección de deriva ─────────────────
+  const syncSlaveTracks = useCallback((thresholdS) => {
+    const master = audioElementsRef.current[masterIdRef.current]
+    if (!master) return
+
+    for (const [id, audio] of Object.entries(audioElementsRef.current)) {
+      if (id === masterIdRef.current || audio.ended) continue
+
+      const drift = Math.abs(audio.currentTime - master.currentTime)
+      if (drift > thresholdS) {
+        audio.currentTime = master.currentTime
+      }
+
+      // Si alguna pista se queda pausada por el navegador, la relanza.
+      if (isPlayingRef.current && audio.paused) {
+        audio
+          .play()
+          .catch(() => {
+            // Ignora rechazos transitorios; el próximo ciclo volverá a intentar.
+          })
+      }
+    }
+  }, [])
+
   const startTimeTracking = useCallback(() => {
+    clearInterval(syncIntervalRef.current)
+
     const tick = () => {
       const master = audioElementsRef.current[masterIdRef.current]
       if (master) {
         setCurrentTime(master.currentTime)
-
-        // Corrige deriva de las pistas secundarias
-        for (const [id, audio] of Object.entries(audioElementsRef.current)) {
-          if (id !== masterIdRef.current && !audio.paused && !audio.ended) {
-            const drift = Math.abs(audio.currentTime - master.currentTime)
-            if (drift > SYNC_THRESHOLD_S) {
-              audio.currentTime = master.currentTime
-            }
-          }
-        }
+        syncSlaveTracks(SYNC_THRESHOLD_S)
       }
       animFrameRef.current = requestAnimationFrame(tick)
     }
+
+    syncIntervalRef.current = setInterval(() => {
+      syncSlaveTracks(HARD_RESYNC_THRESHOLD_S)
+    }, RESYNC_INTERVAL_MS)
+
     animFrameRef.current = requestAnimationFrame(tick)
-  }, [])
+  }, [syncSlaveTracks])
 
   const stopTimeTracking = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
+    clearInterval(syncIntervalRef.current)
   }, [])
 
   // ─── Acciones de transporte ────────────────────────────────────────────────
