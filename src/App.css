@@ -210,6 +210,39 @@
   font-size: 0.9rem;
 }
 
+.lyrics-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 137, 71, 0.24);
+  background: linear-gradient(180deg, rgba(20, 20, 22, 0.78), rgba(11, 11, 13, 0.9));
+  text-align: center;
+}
+
+.lyrics-label {
+  margin: 0 0 8px;
+  font-weight: 800;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #f3a26f;
+}
+
+.lyrics-current {
+  margin: 0;
+  color: #fff4ea;
+  font-size: clamp(1rem, 2.4vw, 1.35rem);
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.lyrics-next {
+  margin: 8px 0 0;
+  color: #beafa5;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
 .transport-controls {
   margin-top: 16px;
   display: grid;

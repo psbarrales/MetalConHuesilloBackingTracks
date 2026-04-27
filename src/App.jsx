@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useMultiTrackPlayer } from './application/useCases/useMultiTrackPlayer'
 import { inMemorySongRepository } from './infrastructure/repositories/inMemorySongRepository'
+import { LyricsPanel } from './ui/components/LyricsPanel'
 import { SongSelector } from './ui/components/SongSelector'
 import { TrackMixer } from './ui/components/TrackMixer'
+import { parseSrt } from './ui/formatters/srt'
 import { TransportControls } from './ui/components/TransportControls'
 import { Timeline } from './ui/components/Timeline'
 import './App.css'
@@ -10,6 +12,7 @@ import './App.css'
 function App() {
   const [coverLoaded, setCoverLoaded] = useState(true)
   const [coverIndex, setCoverIndex] = useState(0)
+  const [lyrics, setLyrics] = useState([])
 
   const {
     songs,
@@ -45,6 +48,46 @@ function App() {
     setCoverLoaded(true)
     setCoverIndex(0)
   }, [currentSongId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadLyrics() {
+      if (!currentSong?.slug) {
+        setLyrics([])
+        return
+      }
+
+      try {
+        const response = await fetch(`/audio/${currentSong.slug}/lyrics.srt`)
+        if (!response.ok) {
+          setLyrics([])
+          return
+        }
+
+        const rawSrt = await response.text()
+        if (!cancelled) {
+          setLyrics(parseSrt(rawSrt))
+        }
+      } catch {
+        if (!cancelled) {
+          setLyrics([])
+        }
+      }
+    }
+
+    loadLyrics()
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentSong?.slug])
+
+  const activeLyricIndex = lyrics.findIndex(
+    (line) => currentTime >= line.start && currentTime < line.end,
+  )
+  const currentLyric = activeLyricIndex >= 0 ? lyrics[activeLyricIndex] : null
+  const nextLyric = activeLyricIndex >= 0 ? lyrics[activeLyricIndex + 1] : lyrics[0]
 
   return (
     <main className="app-shell">
@@ -143,6 +186,12 @@ function App() {
 
         <Timeline currentTime={currentTime} duration={duration} onSeek={seekTo} />
 
+        <LyricsPanel
+          hasLyrics={lyrics.length > 0}
+          currentLine={currentLyric?.text ?? ''}
+          nextLine={nextLyric?.text ?? ''}
+        />
+
         <TransportControls
           isPlaying={isPlaying}
           isPreparing={isPreparingPlayback}
@@ -154,7 +203,7 @@ function App() {
       </section>
 
       <footer>
-        <p>Coloca los archivos en <code>/public/audio/&lt;slug&gt;/voz.mp3</code>, <code>guitarra.mp3</code>, <code>bajo.mp3</code>, <code>bateria.mp3</code></p>
+        <p>Coloca los archivos en <code>/public/audio/&lt;slug&gt;/voz.mp3</code>, <code>guitarra.mp3</code>, <code>bajo.mp3</code>, <code>bateria.mp3</code> y opcionalmente <code>lyrics.srt</code></p>
       </footer>
     </main>
   )
