@@ -364,7 +364,7 @@ export function useMultiTrackPlayer(songRepository) {
     }
     // Solo se recrea cuando cambia la canción
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSong?.id, effectivePitchSemitones])
+  }, [currentSong?.id])
 
   // ─── Propaga cambios de volumen (gain por pista) ──────────────────────────
   useEffect(() => {
