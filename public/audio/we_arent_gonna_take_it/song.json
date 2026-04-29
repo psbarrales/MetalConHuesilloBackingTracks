@@ -1,0 +1,8 @@
+{
+  "id": "song-07",
+  "slug": "we_arent_gonna_take_it",
+  "title": "We Aren't Gonna Take It",
+  "artist": "Twisted Sister",
+  "tempo": 148,
+  "tracks": ["voz", "guitarra", "bajo", "bateria"]
+}

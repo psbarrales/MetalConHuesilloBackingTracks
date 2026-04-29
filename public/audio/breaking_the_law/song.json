@@ -1,0 +1,19 @@
+{
+  "id": "song:breaking_the_law",
+  "slug": "breaking_the_law",
+  "title": "Breaking the Law",
+  "artist": "Judas Priest",
+  "tempo": 165,
+  "tracks": [
+    "voz",
+    "guitarra",
+    "bajo",
+    "bateria"
+  ],
+  "sourceTracks": [
+    "vocals.mp3",
+    "bass.mp3",
+    "drums.mp3",
+    "other.mp3"
+  ]
+}

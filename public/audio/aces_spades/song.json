@@ -1,0 +1,8 @@
+{
+  "id": "song-06",
+  "slug": "aces_spades",
+  "title": "Ace of Spades",
+  "artist": "Motorhead",
+  "tempo": 144,
+  "tracks": ["voz", "guitarra", "bajo", "bateria"]
+}

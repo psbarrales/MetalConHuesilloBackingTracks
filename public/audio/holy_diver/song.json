@@ -1,0 +1,8 @@
+{
+  "id": "song-01",
+  "slug": "holy_diver",
+  "title": "Holy Diver",
+  "artist": "Dio",
+  "tempo": 92,
+  "tracks": ["voz", "guitarra", "bajo", "bateria"]
+}

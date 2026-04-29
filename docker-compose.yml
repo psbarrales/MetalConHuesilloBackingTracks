@@ -7,3 +7,12 @@ services:
     ports:
       - "8080:80"
     restart: unless-stopped
+
+  backing-tracking-stemsplitter:
+    build:
+      context: ./tools/stemsplitter
+      dockerfile: Dockerfile
+    container_name: backing-tracking-stemsplitter
+    ports:
+      - "4000:4000"
+    restart: unless-stopped

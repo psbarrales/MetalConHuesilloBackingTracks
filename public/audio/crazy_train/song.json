@@ -1,0 +1,8 @@
+{
+  "id": "song-04",
+  "slug": "crazy_train",
+  "title": "Crazy Train",
+  "artist": "Ozzy Osbourne",
+  "tempo": 138,
+  "tracks": ["voz", "guitarra", "bajo", "bateria"]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "song:barracuda",
+  "slug": "barracuda",
+  "title": "Barracuda",
+  "artist": "Heart",
+  "tempo": 137,
+  "tracks": [
+    "voz",
+    "guitarra",
+    "bajo",
+    "bateria"
+  ],
+  "sourceTracks": [
+    "vocals.mp3",
+    "bass.mp3",
+    "drums.mp3",
+    "other.mp3"
+  ]
+}
