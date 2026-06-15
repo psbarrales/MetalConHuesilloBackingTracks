@@ -76,7 +76,9 @@ Desde la interfaz se puede agregar una canción custom subiendo un archivo maste
 La API separa los stems, crea `song.json`, guarda todo en `custom-songs/{slug}` y expone:
 
 - `GET /songs/custom`: catálogo de canciones custom.
-- `POST /songs/custom`: creación con multipart form (`file`, `title`, `artist`, `tempo` opcionales salvo `file`).
+- `POST /songs/custom`: crea la entrada con multipart form (`file`, `title`, `artist`, `tempo` opcionales salvo `file`) y responde `201` con `status: processing`.
+- `POST /songs/custom/manual`: guarda una canción custom ya separada con multipart form (`title`, `artist`, `tempo`, `cover`, `voz`, `guitarra`, `bajo`, `bateria`); responde `201` con `status: ready`.
+- `GET /songs/custom/{slug}/status`: estado de separación (`processing`, `ready` o `error`).
 - `GET /songs/custom/{slug}/song.json`: metadata de una canción custom.
 - `GET /songs/custom/{slug}/{archivo}`: archivos generados (`voz.mp3`, `guitarra.mp3`, `bajo.mp3`, `bateria.mp3`, etc.).
 

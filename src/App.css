@@ -92,6 +92,12 @@
   gap: 12px;
 }
 
+.song-actions {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
 .song-selector,
 .volume-selector,
 .tempo-selector {
@@ -141,39 +147,9 @@
   accent-color: #f15a0e;
 }
 
-.custom-song-form {
-  margin-top: 16px;
-  display: grid;
-  grid-template-columns: minmax(190px, 1.2fr) minmax(180px, 1fr) repeat(3, minmax(110px, 0.7fr)) auto;
-  align-items: end;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(255, 137, 71, 0.24);
-  border-radius: 12px;
-  background: rgba(13, 13, 15, 0.7);
-}
-
-.custom-song-form label {
-  display: grid;
-  gap: 7px;
-  color: #f3f0ec;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-}
-
-.custom-song-title {
-  font-weight: 900;
-  color: #ffefe2;
-}
-
-.custom-song-copy {
-  margin-top: 5px;
-  color: #c9c0bd;
-  font-size: 0.86rem;
-  line-height: 1.35;
-}
-
-.custom-song-form button {
+.add-song-button,
+.custom-song-form button,
+.modal-close-button {
   min-height: 40px;
   border-radius: 11px;
   border: 1px solid #ff8a50;
@@ -184,15 +160,146 @@
   font-weight: 800;
 }
 
+.add-song-button {
+  justify-self: start;
+}
+
 .custom-song-form button:disabled {
   opacity: 0.6;
   cursor: wait;
 }
 
+.custom-song-process {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 137, 71, 0.24);
+  border-radius: 12px;
+  background: rgba(13, 13, 15, 0.7);
+  font-weight: 700;
+}
+
+.custom-song-process.is-error {
+  color: #ffb2a1;
+}
+
+.custom-song-process.is-success {
+  color: #a9f0c1;
+}
+
+.custom-song-process.is-processing,
+.custom-song-process.is-uploading {
+  color: #ffd198;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.custom-song-modal {
+  width: min(760px, 100%);
+  max-height: min(88vh, 720px);
+  overflow: auto;
+  border: 1px solid #4f4a4a;
+  border-radius: 14px;
+  padding: 18px;
+  background: linear-gradient(180deg, rgba(27, 27, 30, 0.98), rgba(12, 12, 14, 0.98));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.7);
+}
+
+.modal-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: #ffefe2;
+  font-size: 1.35rem;
+}
+
+.modal-header p {
+  margin-top: 6px;
+  color: #c9c0bd;
+  line-height: 1.4;
+}
+
+.modal-close-button {
+  background: linear-gradient(180deg, #343436, #19191b);
+  border-color: #5e5858;
+}
+
+.custom-song-mode {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 4px;
+  border: 1px solid #4e4b4b;
+  border-radius: 12px;
+  background: #121214;
+}
+
+.custom-song-mode button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 12px;
+  background: transparent;
+  color: #c9c0bd;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.custom-song-mode button.is-active {
+  background: linear-gradient(180deg, rgba(255, 112, 38, 0.3), rgba(158, 45, 8, 0.38));
+  color: #fff;
+}
+
+.custom-song-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.custom-song-form label {
+  display: grid;
+  gap: 7px;
+  color: #f3f0ec;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.custom-song-form button {
+  align-self: end;
+}
+
 .custom-song-status {
-  grid-column: 1 / -1;
+  margin-top: 14px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 137, 71, 0.24);
+  border-radius: 12px;
+  background: rgba(13, 13, 15, 0.7);
   font-weight: 700;
   font-size: 0.9rem;
+}
+
+.custom-song-status small {
+  color: #bdb4b2;
 }
 
 .custom-song-status.is-error {
@@ -203,7 +310,8 @@
   color: #a9f0c1;
 }
 
-.custom-song-status.is-loading {
+.custom-song-status.is-uploading,
+.custom-song-status.is-processing {
   color: #ffd198;
 }
 
@@ -459,6 +567,10 @@ footer code {
   }
 
   .custom-song-form {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-header {
     grid-template-columns: 1fr;
   }
 

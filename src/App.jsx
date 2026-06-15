@@ -18,6 +18,19 @@ function App() {
     artist: '',
     tempo: '',
   })
+  const [customSongMode, setCustomSongMode] = useState('separate')
+  const [manualSongForm, setManualSongForm] = useState({
+    title: '',
+    artist: '',
+    tempo: '',
+    cover: null,
+    voz: null,
+    guitarra: null,
+    bajo: null,
+    bateria: null,
+  })
+  const [isCustomSongModalOpen, setIsCustomSongModalOpen] = useState(false)
+  const [customSongJob, setCustomSongJob] = useState(null)
   const [customSongStatus, setCustomSongStatus] = useState({ type: 'idle', message: '' })
 
   const {
@@ -88,6 +101,54 @@ function App() {
     }
   }, [currentSong?.baseUrl, currentSong?.slug])
 
+  useEffect(() => {
+    if (!customSongJob?.slug || customSongStatus.type !== 'processing') {
+      return undefined
+    }
+
+    let cancelled = false
+    const pollStatus = async () => {
+      try {
+        const song = await songRepository.getCustomSongStatus(customSongJob.slug)
+        if (cancelled) return
+
+        if (song.status === 'ready') {
+          const nextSongs = await reloadSongs()
+          const readySong = nextSongs.find((item) => item.id === song.id)
+          if (readySong) {
+            selectSong(readySong.id)
+          }
+          setCustomSongJob(song)
+          setCustomSongStatus({ type: 'success', message: `Canción lista: ${song.title}` })
+          return
+        }
+
+        if (song.status === 'error') {
+          setCustomSongJob(song)
+          setCustomSongStatus({
+            type: 'error',
+            message: song.error ?? 'No se pudo separar la canción.',
+          })
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCustomSongStatus({
+            type: 'error',
+            message: error.message ?? 'No se pudo consultar el proceso.',
+          })
+        }
+      }
+    }
+
+    pollStatus()
+    const intervalId = window.setInterval(pollStatus, 3500)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [customSongJob?.slug, customSongStatus.type, reloadSongs, selectSong])
+
   async function handleCreateCustomSong(event) {
     event.preventDefault()
 
@@ -97,23 +158,87 @@ function App() {
     }
 
     setCustomSongStatus({
-      type: 'loading',
-      message: 'Separando y guardando canción. Esto puede tardar varios minutos.',
+      type: 'uploading',
+      message: 'Subiendo archivo y creando entrada.',
     })
 
     try {
       const song = await songRepository.createCustomSong(customSongForm)
-      await reloadSongs()
-      selectSong(song.id)
       setCustomSongForm({ file: null, title: '', artist: '', tempo: '' })
       event.currentTarget.reset()
-      setCustomSongStatus({ type: 'success', message: `Canción guardada: ${song.title}` })
+      setCustomSongJob(song)
+      setCustomSongStatus({
+        type: 'processing',
+        message: `Entrada creada (${song.id}). Separando stems en background.`,
+      })
     } catch (error) {
       setCustomSongStatus({
         type: 'error',
         message: error.message ?? 'No se pudo crear la canción.',
       })
     }
+  }
+
+  async function handleCreateManualSong(event) {
+    event.preventDefault()
+
+    if (!manualSongForm.title.trim()) {
+      setCustomSongStatus({ type: 'error', message: 'Ingresa el nombre de la canción.' })
+      return
+    }
+
+    const missingTracks = ['voz', 'guitarra', 'bajo', 'bateria'].filter((trackId) => !manualSongForm[trackId])
+    if (missingTracks.length) {
+      setCustomSongStatus({
+        type: 'error',
+        message: `Faltan mp3: ${missingTracks.join(', ')}.`,
+      })
+      return
+    }
+
+    setCustomSongStatus({ type: 'uploading', message: 'Subiendo stems y guardando canción.' })
+
+    try {
+      const song = await songRepository.createManualCustomSong(manualSongForm)
+      const nextSongs = await reloadSongs()
+      const readySong = nextSongs.find((item) => item.id === song.id)
+      if (readySong) {
+        selectSong(readySong.id)
+      }
+      setManualSongForm({
+        title: '',
+        artist: '',
+        tempo: '',
+        cover: null,
+        voz: null,
+        guitarra: null,
+        bajo: null,
+        bateria: null,
+      })
+      event.currentTarget.reset()
+      setCustomSongJob(song)
+      setCustomSongStatus({ type: 'success', message: `Canción guardada: ${song.title}` })
+    } catch (error) {
+      setCustomSongStatus({
+        type: 'error',
+        message: error.message ?? 'No se pudo guardar la canción manual.',
+      })
+    }
+  }
+
+  function openCustomSongModal() {
+    setIsCustomSongModalOpen(true)
+    if (customSongStatus.type === 'idle') {
+      setCustomSongStatus({ type: 'idle', message: '' })
+    }
+  }
+
+  function closeCustomSongModal() {
+    setIsCustomSongModalOpen(false)
+  }
+
+  function setManualFile(field, file) {
+    setManualSongForm((prev) => ({ ...prev, [field]: file }))
   }
 
   const activeLyricIndex = lyrics.findIndex(
@@ -138,7 +263,12 @@ function App() {
 
       <section className={`player-card ${isPlaying ? 'is-playing' : ''}`}>
         <div className="meta-row">
-          <SongSelector songs={songs} currentSongId={currentSongId} onSelect={selectSong} />
+          <div className="song-actions">
+            <SongSelector songs={songs} currentSongId={currentSongId} onSelect={selectSong} />
+            <button type="button" className="add-song-button" onClick={openCustomSongModal}>
+              Agregar canción
+            </button>
+          </div>
           <div className="control-stack">
             <label className="volume-selector">
               Volumen
@@ -181,66 +311,12 @@ function App() {
           </div>
         </div>
 
-        <form className="custom-song-form" onSubmit={handleCreateCustomSong}>
-          <div>
-            <p className="custom-song-title">Agregar canción custom</p>
-            <p className="custom-song-copy">Sube un master; la API separa, guarda y expone los stems.</p>
+        {customSongStatus.message && !isCustomSongModalOpen && (
+          <div className={`custom-song-process is-${customSongStatus.type}`}>
+            <span>{customSongStatus.message}</span>
+            {customSongJob?.status === 'processing' && <span>Consultando estado...</span>}
           </div>
-          <label>
-            Audio
-            <input
-              type="file"
-              accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,.mp3,.wav,.ogg,.flac"
-              onChange={(event) =>
-                setCustomSongForm((prev) => ({ ...prev, file: event.target.files?.[0] ?? null }))
-              }
-            />
-          </label>
-          <label>
-            Título
-            <input
-              type="text"
-              value={customSongForm.title}
-              placeholder="Opcional"
-              onChange={(event) =>
-                setCustomSongForm((prev) => ({ ...prev, title: event.target.value }))
-              }
-            />
-          </label>
-          <label>
-            Artista
-            <input
-              type="text"
-              value={customSongForm.artist}
-              placeholder="Opcional"
-              onChange={(event) =>
-                setCustomSongForm((prev) => ({ ...prev, artist: event.target.value }))
-              }
-            />
-          </label>
-          <label>
-            BPM
-            <input
-              type="number"
-              min="40"
-              max="220"
-              step="1"
-              value={customSongForm.tempo}
-              placeholder="Opcional"
-              onChange={(event) =>
-                setCustomSongForm((prev) => ({ ...prev, tempo: event.target.value }))
-              }
-            />
-          </label>
-          <button type="submit" disabled={customSongStatus.type === 'loading'}>
-            {customSongStatus.type === 'loading' ? 'Procesando...' : 'Crear'}
-          </button>
-          {customSongStatus.message && (
-            <p className={`custom-song-status is-${customSongStatus.type}`}>
-              {customSongStatus.message}
-            </p>
-          )}
-        </form>
+        )}
 
         <div className="now-playing">
           <div className="cover-center">
@@ -297,8 +373,186 @@ function App() {
       </section>
 
       <footer>
-        <p>Usa el formulario para canciones custom o coloca archivos en <code>/public/audio/&lt;slug&gt;/voz.mp3</code>, <code>guitarra.mp3</code>, <code>bajo.mp3</code>, <code>bateria.mp3</code> y opcionalmente <code>lyrics.srt</code></p>
+        <p>Usa el botón de canciones custom o coloca archivos en <code>/public/audio/&lt;slug&gt;/voz.mp3</code>, <code>guitarra.mp3</code>, <code>bajo.mp3</code>, <code>bateria.mp3</code> y opcionalmente <code>lyrics.srt</code></p>
       </footer>
+
+      {isCustomSongModalOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="custom-song-modal" role="dialog" aria-modal="true" aria-labelledby="custom-song-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="custom-song-title">Agregar canción custom</h2>
+                <p>Separa un master con la API o carga stems mp3 ya preparados.</p>
+              </div>
+              <button type="button" className="modal-close-button" onClick={closeCustomSongModal}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className="custom-song-mode" role="tablist" aria-label="Modo de creación">
+              <button
+                type="button"
+                className={customSongMode === 'separate' ? 'is-active' : ''}
+                onClick={() => setCustomSongMode('separate')}
+              >
+                Separar master
+              </button>
+              <button
+                type="button"
+                className={customSongMode === 'manual' ? 'is-active' : ''}
+                onClick={() => setCustomSongMode('manual')}
+              >
+                Cargar stems
+              </button>
+            </div>
+
+            {customSongMode === 'separate' ? (
+              <form className="custom-song-form" onSubmit={handleCreateCustomSong}>
+                <label>
+                  Audio
+                  <input
+                    type="file"
+                    accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,.mp3,.wav,.ogg,.flac"
+                    onChange={(event) =>
+                      setCustomSongForm((prev) => ({ ...prev, file: event.target.files?.[0] ?? null }))
+                    }
+                  />
+                </label>
+                <label>
+                  Título
+                  <input
+                    type="text"
+                    value={customSongForm.title}
+                    placeholder="Opcional"
+                    onChange={(event) =>
+                      setCustomSongForm((prev) => ({ ...prev, title: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Artista
+                  <input
+                    type="text"
+                    value={customSongForm.artist}
+                    placeholder="Opcional"
+                    onChange={(event) =>
+                      setCustomSongForm((prev) => ({ ...prev, artist: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  BPM
+                  <input
+                    type="number"
+                    min="40"
+                    max="220"
+                    step="1"
+                    value={customSongForm.tempo}
+                    placeholder="Opcional"
+                    onChange={(event) =>
+                      setCustomSongForm((prev) => ({ ...prev, tempo: event.target.value }))
+                    }
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={customSongStatus.type === 'uploading' || customSongStatus.type === 'processing'}
+                >
+                  {customSongStatus.type === 'uploading' ? 'Subiendo...' : 'Crear entrada'}
+                </button>
+              </form>
+            ) : (
+              <form className="custom-song-form" onSubmit={handleCreateManualSong}>
+                <label>
+                  Nombre
+                  <input
+                    type="text"
+                    value={manualSongForm.title}
+                    onChange={(event) =>
+                      setManualSongForm((prev) => ({ ...prev, title: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Artista
+                  <input
+                    type="text"
+                    value={manualSongForm.artist}
+                    placeholder="Opcional"
+                    onChange={(event) =>
+                      setManualSongForm((prev) => ({ ...prev, artist: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Tempo
+                  <input
+                    type="number"
+                    min="40"
+                    max="220"
+                    step="1"
+                    value={manualSongForm.tempo}
+                    placeholder="Opcional"
+                    onChange={(event) =>
+                      setManualSongForm((prev) => ({ ...prev, tempo: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Portada
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+                    onChange={(event) => setManualFile('cover', event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <label>
+                  Voz mp3
+                  <input
+                    type="file"
+                    accept="audio/mpeg,.mp3"
+                    onChange={(event) => setManualFile('voz', event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <label>
+                  Guitarra mp3
+                  <input
+                    type="file"
+                    accept="audio/mpeg,.mp3"
+                    onChange={(event) => setManualFile('guitarra', event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <label>
+                  Bajo mp3
+                  <input
+                    type="file"
+                    accept="audio/mpeg,.mp3"
+                    onChange={(event) => setManualFile('bajo', event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <label>
+                  Batería mp3
+                  <input
+                    type="file"
+                    accept="audio/mpeg,.mp3"
+                    onChange={(event) => setManualFile('bateria', event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <button type="submit" disabled={customSongStatus.type === 'uploading'}>
+                  {customSongStatus.type === 'uploading' ? 'Subiendo...' : 'Guardar canción'}
+                </button>
+              </form>
+            )}
+
+            {customSongStatus.message && (
+              <div className={`custom-song-status is-${customSongStatus.type}`}>
+                <p>{customSongStatus.message}</p>
+                {customSongJob?.slug && <small>Slug: {customSongJob.slug}</small>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   )
 }

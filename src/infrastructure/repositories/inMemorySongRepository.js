@@ -45,18 +45,20 @@ async function fetchCustomSongs() {
     }
 
     const payload = await response.json()
-    return (payload.songs ?? []).map((song) =>
-      createSong({
-        id: song.id,
-        slug: song.slug,
-        title: song.title,
-        artist: song.artist ?? '',
-        bpm: song.tempo ?? song.bpm ?? 120,
-        tracks: song.tracks,
-        baseUrl: song.baseUrl,
-        custom: true,
-      }),
-    )
+    return (payload.songs ?? [])
+      .filter((song) => song.status === 'ready')
+      .map((song) =>
+        createSong({
+          id: song.id,
+          slug: song.slug,
+          title: song.title,
+          artist: song.artist ?? '',
+          bpm: song.tempo ?? song.bpm ?? 120,
+          tracks: song.tracks,
+          baseUrl: song.baseUrl,
+          custom: true,
+        }),
+      )
   } catch {
     return []
   }
@@ -85,11 +87,42 @@ export const songRepository = {
       throw new Error(payload.error ?? 'No se pudo crear la canción.')
     }
 
-    return createSong({
-      ...payload.song,
-      bpm: payload.song?.tempo ?? payload.song?.bpm ?? 120,
-      custom: true,
+    return payload.song
+  },
+
+  async createManualCustomSong({ title, artist, tempo, cover, voz, guitarra, bajo, bateria }) {
+    const formData = new FormData()
+    formData.append('title', title)
+    if (artist) formData.append('artist', artist)
+    if (tempo) formData.append('tempo', tempo)
+    if (cover) formData.append('cover', cover)
+    formData.append('voz', voz)
+    formData.append('guitarra', guitarra)
+    formData.append('bajo', bajo)
+    formData.append('bateria', bateria)
+
+    const response = await fetch(`${API_BASE_URL}/songs/custom/manual`, {
+      method: 'POST',
+      body: formData,
     })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(payload.error ?? 'No se pudo guardar la canción manual.')
+    }
+
+    return payload.song
+  },
+
+  async getCustomSongStatus(slug) {
+    const response = await fetch(`${API_BASE_URL}/songs/custom/${slug}/status`)
+    const payload = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? 'No se pudo consultar el estado de la canción.')
+    }
+
+    return payload.song
   },
 }
 
