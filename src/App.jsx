@@ -151,6 +151,7 @@ function App() {
 
   async function handleCreateCustomSong(event) {
     event.preventDefault()
+    const form = event.currentTarget
 
     if (!customSongForm.file) {
       setCustomSongStatus({ type: 'error', message: 'Selecciona un archivo de audio.' })
@@ -165,7 +166,7 @@ function App() {
     try {
       const song = await songRepository.createCustomSong(customSongForm)
       setCustomSongForm({ file: null, title: '', artist: '', tempo: '' })
-      event.currentTarget.reset()
+      form.reset()
       setCustomSongJob(song)
       setCustomSongStatus({
         type: 'processing',
@@ -181,6 +182,7 @@ function App() {
 
   async function handleCreateManualSong(event) {
     event.preventDefault()
+    const form = event.currentTarget
 
     if (!manualSongForm.title.trim()) {
       setCustomSongStatus({ type: 'error', message: 'Ingresa el nombre de la canción.' })
@@ -215,7 +217,7 @@ function App() {
         bajo: null,
         bateria: null,
       })
-      event.currentTarget.reset()
+      form.reset()
       setCustomSongJob(song)
       setCustomSongStatus({ type: 'success', message: `Canción guardada: ${song.title}` })
     } catch (error) {
