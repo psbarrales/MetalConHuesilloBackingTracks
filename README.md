@@ -63,6 +63,9 @@ La app queda servida por Nginx con fallback para rutas SPA.
 La API queda expuesta en http://localhost:4000 y usa `api/Dockerfile`.
 Las canciones custom persisten en `./custom-songs`, montado en el contenedor como `/data/custom-songs`.
 
+La web lee la URL de la API desde `VITE_STEM_SPLITTER_URL`.
+En la imagen Docker web esta variable se inyecta al iniciar el contenedor en `/config.js`, por lo que puede configurarse como variable de ambiente de runtime en Railway.
+
 ## Separación de stems
 
 Se agregó un servicio paralelo de separación con Demucs.

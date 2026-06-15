@@ -33,7 +33,9 @@ const songs = Object.entries(songCatalog)
   .filter(Boolean)
   .sort(compareSongs)
 
-const API_BASE_URL = import.meta.env.VITE_STEM_SPLITTER_URL ?? 'http://localhost:4000'
+const runtimeConfig = typeof window === 'undefined' ? {} : window.__APP_CONFIG__ ?? {}
+const API_BASE_URL =
+  runtimeConfig.VITE_STEM_SPLITTER_URL || import.meta.env.VITE_STEM_SPLITTER_URL || 'http://localhost:4000'
 
 async function fetchCustomSongs() {
   try {
