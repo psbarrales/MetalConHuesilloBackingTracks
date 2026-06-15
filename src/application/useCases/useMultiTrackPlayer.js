@@ -135,21 +135,14 @@ function applyTrackPitchBehavior(audio, trackId, pitchSemitones) {
   }
 }
 
+function buildTrackUrl(song, trackId) {
+  return `${song.baseUrl}/${trackId}.mp3`
+}
+
 export function useMultiTrackPlayer(songRepository) {
-  const songs = useMemo(() => songRepository.listSongs(), [songRepository])
+  const [songs, setSongs] = useState([])
   const [currentSongId, setCurrentSongId] = useState(() => {
-    if (typeof window === 'undefined') {
-      return songs[0]?.id ?? null
-    }
-
-    const persistedSongId = window.localStorage.getItem(LAST_SONG_STORAGE_KEY)
-    const persistedSongExists = songs.some((song) => song.id === persistedSongId)
-
-    if (persistedSongId && persistedSongExists) {
-      return persistedSongId
-    }
-
-    return songs[0]?.id ?? null
+    return typeof window === 'undefined' ? null : window.localStorage.getItem(LAST_SONG_STORAGE_KEY)
   })
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -176,6 +169,29 @@ export function useMultiTrackPlayer(songRepository) {
   const volumeRef = useRef(volume)
   const currentSongRef = useRef(null)
   const playbackRateRef = useRef(1)
+
+  const reloadSongs = useCallback(async () => {
+    const nextSongs = await songRepository.listSongs()
+    setSongs(nextSongs)
+    return nextSongs
+  }, [songRepository])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadSongs() {
+      const nextSongs = await songRepository.listSongs()
+      if (!cancelled) {
+        setSongs(nextSongs)
+      }
+    }
+
+    loadSongs()
+
+    return () => {
+      cancelled = true
+    }
+  }, [songRepository])
 
   useEffect(() => {
     muteStateRef.current = muteState
@@ -284,7 +300,7 @@ export function useMultiTrackPlayer(songRepository) {
       : currentSong.tracks.find((t) => !TRACK_TYPE_BY_ID[t]?.synthetic) ?? currentSong.tracks[0]
     masterIdRef.current = masterId
 
-    const metronomeTrackUrl = `/audio/${currentSong.slug}/metronomo.mp3`
+    const metronomeTrackUrl = buildTrackUrl(currentSong, 'metronomo')
     const hasMetronomeAudio = currentSong.tracks.includes('metronomo')
       ? await probeAudioTrack(metronomeTrackUrl)
       : false
@@ -302,7 +318,7 @@ export function useMultiTrackPlayer(songRepository) {
       applyTrackOutput(audio, muteStateRef.current[trackId] ?? true, volumeRef.current)
       applyTrackPitchBehavior(audio, trackId, effectivePitchSemitones)
       audio.playbackRate = playbackRateRef.current
-      audio.src = trackId === 'metronomo' ? metronomeTrackUrl : `/audio/${currentSong.slug}/${trackId}.mp3`
+      audio.src = buildTrackUrl(currentSong, trackId)
 
       audio.addEventListener(
         'loadedmetadata',
@@ -600,5 +616,6 @@ export function useMultiTrackPlayer(songRepository) {
     setPitchSemitones: updatePitchSemitones,
     setVolume,
     toggleMute,
+    reloadSongs,
   }
 }

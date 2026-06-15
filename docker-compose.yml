@@ -10,9 +10,13 @@ services:
 
   backing-tracking-stemsplitter:
     build:
-      context: ./tools/stemsplitter
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: api/Dockerfile
     container_name: backing-tracking-stemsplitter
+    environment:
+      CUSTOM_SONGS_ROOT: /data/custom-songs
+    volumes:
+      - ./custom-songs:/data/custom-songs
     ports:
       - "4000:4000"
     restart: unless-stopped

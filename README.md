@@ -60,12 +60,22 @@ Build y run con compose:
 2. Abrir http://localhost:8080
 
 La app queda servida por Nginx con fallback para rutas SPA.
+La API queda expuesta en http://localhost:4000 y usa `api/Dockerfile`.
+Las canciones custom persisten en `./custom-songs`, montado en el contenedor como `/data/custom-songs`.
 
 ## Separación de stems
 
 Se agregó un servicio paralelo de separación con Demucs.
 
 El separador queda expuesto localmente en http://localhost:4000.
+
+Desde la interfaz se puede agregar una canción custom subiendo un archivo master.
+La API separa los stems, crea `song.json`, guarda todo en `custom-songs/{slug}` y expone:
+
+- `GET /songs/custom`: catálogo de canciones custom.
+- `POST /songs/custom`: creación con multipart form (`file`, `title`, `artist`, `tempo` opcionales salvo `file`).
+- `GET /songs/custom/{slug}/song.json`: metadata de una canción custom.
+- `GET /songs/custom/{slug}/{archivo}`: archivos generados (`voz.mp3`, `guitarra.mp3`, `bajo.mp3`, `bateria.mp3`, etc.).
 
 Flujo esperado por canción:
 

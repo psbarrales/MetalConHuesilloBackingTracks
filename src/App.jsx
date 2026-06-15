@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMultiTrackPlayer } from './application/useCases/useMultiTrackPlayer'
-import { inMemorySongRepository } from './infrastructure/repositories/inMemorySongRepository'
+import { songRepository } from './infrastructure/repositories/inMemorySongRepository'
 import { LyricsPanel } from './ui/components/LyricsPanel'
 import { SongSelector } from './ui/components/SongSelector'
 import { TrackMixer } from './ui/components/TrackMixer'
@@ -10,9 +10,15 @@ import { Timeline } from './ui/components/Timeline'
 import './App.css'
 
 function App() {
-  const [coverLoaded, setCoverLoaded] = useState(true)
-  const [coverIndex, setCoverIndex] = useState(0)
+  const [coverState, setCoverState] = useState({ songId: null, index: 0, loaded: true })
   const [lyrics, setLyrics] = useState([])
+  const [customSongForm, setCustomSongForm] = useState({
+    file: null,
+    title: '',
+    artist: '',
+    tempo: '',
+  })
+  const [customSongStatus, setCustomSongStatus] = useState({ type: 'idle', message: '' })
 
   const {
     songs,
@@ -37,17 +43,16 @@ function App() {
     setPitchSemitones,
     setVolume,
     toggleMute,
-  } = useMultiTrackPlayer(inMemorySongRepository)
+    reloadSongs,
+  } = useMultiTrackPlayer(songRepository)
 
   const coverCandidates = currentSong
-    ? [`/audio/${currentSong.slug}/portada.png`, `/${currentSong.slug}/portada.png`]
+    ? [`${currentSong.baseUrl}/portada.png`, `/${currentSong.slug}/portada.png`]
     : []
+  const coverStateMatchesSong = coverState.songId === currentSongId
+  const coverIndex = coverStateMatchesSong ? coverState.index : 0
+  const coverLoaded = coverStateMatchesSong ? coverState.loaded : true
   const coverSrc = coverCandidates[coverIndex] ?? ''
-
-  useEffect(() => {
-    setCoverLoaded(true)
-    setCoverIndex(0)
-  }, [currentSongId])
 
   useEffect(() => {
     let cancelled = false
@@ -59,7 +64,7 @@ function App() {
       }
 
       try {
-        const response = await fetch(`/audio/${currentSong.slug}/lyrics.srt`)
+        const response = await fetch(`${currentSong.baseUrl}/lyrics.srt`)
         if (!response.ok) {
           setLyrics([])
           return
@@ -81,7 +86,35 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [currentSong?.slug])
+  }, [currentSong?.baseUrl, currentSong?.slug])
+
+  async function handleCreateCustomSong(event) {
+    event.preventDefault()
+
+    if (!customSongForm.file) {
+      setCustomSongStatus({ type: 'error', message: 'Selecciona un archivo de audio.' })
+      return
+    }
+
+    setCustomSongStatus({
+      type: 'loading',
+      message: 'Separando y guardando canción. Esto puede tardar varios minutos.',
+    })
+
+    try {
+      const song = await songRepository.createCustomSong(customSongForm)
+      await reloadSongs()
+      selectSong(song.id)
+      setCustomSongForm({ file: null, title: '', artist: '', tempo: '' })
+      event.currentTarget.reset()
+      setCustomSongStatus({ type: 'success', message: `Canción guardada: ${song.title}` })
+    } catch (error) {
+      setCustomSongStatus({
+        type: 'error',
+        message: error.message ?? 'No se pudo crear la canción.',
+      })
+    }
+  }
 
   const activeLyricIndex = lyrics.findIndex(
     (line) => currentTime >= line.start && currentTime < line.end,
@@ -148,6 +181,67 @@ function App() {
           </div>
         </div>
 
+        <form className="custom-song-form" onSubmit={handleCreateCustomSong}>
+          <div>
+            <p className="custom-song-title">Agregar canción custom</p>
+            <p className="custom-song-copy">Sube un master; la API separa, guarda y expone los stems.</p>
+          </div>
+          <label>
+            Audio
+            <input
+              type="file"
+              accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,.mp3,.wav,.ogg,.flac"
+              onChange={(event) =>
+                setCustomSongForm((prev) => ({ ...prev, file: event.target.files?.[0] ?? null }))
+              }
+            />
+          </label>
+          <label>
+            Título
+            <input
+              type="text"
+              value={customSongForm.title}
+              placeholder="Opcional"
+              onChange={(event) =>
+                setCustomSongForm((prev) => ({ ...prev, title: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Artista
+            <input
+              type="text"
+              value={customSongForm.artist}
+              placeholder="Opcional"
+              onChange={(event) =>
+                setCustomSongForm((prev) => ({ ...prev, artist: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            BPM
+            <input
+              type="number"
+              min="40"
+              max="220"
+              step="1"
+              value={customSongForm.tempo}
+              placeholder="Opcional"
+              onChange={(event) =>
+                setCustomSongForm((prev) => ({ ...prev, tempo: event.target.value }))
+              }
+            />
+          </label>
+          <button type="submit" disabled={customSongStatus.type === 'loading'}>
+            {customSongStatus.type === 'loading' ? 'Procesando...' : 'Crear'}
+          </button>
+          {customSongStatus.message && (
+            <p className={`custom-song-status is-${customSongStatus.type}`}>
+              {customSongStatus.message}
+            </p>
+          )}
+        </form>
+
         <div className="now-playing">
           <div className="cover-center">
             {coverSrc && coverLoaded ? (
@@ -157,9 +251,9 @@ function App() {
                 alt={`Portada de ${currentSong?.title ?? 'cancion'}`}
                 onError={() => {
                   if (coverIndex < coverCandidates.length - 1) {
-                    setCoverIndex((prev) => prev + 1)
+                    setCoverState({ songId: currentSongId, index: coverIndex + 1, loaded: true })
                   } else {
-                    setCoverLoaded(false)
+                    setCoverState({ songId: currentSongId, index: coverIndex, loaded: false })
                   }
                 }}
               />
@@ -169,7 +263,7 @@ function App() {
           </div>
 
           <h2>{currentSong?.title ?? 'Sin canciones'}</h2>
-          <p>{currentSong?.artist ?? 'Agrega canciones en /public/audio'}</p>
+          <p>{currentSong?.artist ?? 'Agrega canciones desde la interfaz o en /public/audio'}</p>
           {currentSong?.bpm && (
             <p className="bpm-label">
               Tempo base: {baseBpm} BPM · Tempo actual: {targetBpm} BPM
@@ -203,7 +297,7 @@ function App() {
       </section>
 
       <footer>
-        <p>Coloca los archivos en <code>/public/audio/&lt;slug&gt;/voz.mp3</code>, <code>guitarra.mp3</code>, <code>bajo.mp3</code>, <code>bateria.mp3</code> y opcionalmente <code>lyrics.srt</code></p>
+        <p>Usa el formulario para canciones custom o coloca archivos en <code>/public/audio/&lt;slug&gt;/voz.mp3</code>, <code>guitarra.mp3</code>, <code>bajo.mp3</code>, <code>bateria.mp3</code> y opcionalmente <code>lyrics.srt</code></p>
       </footer>
     </main>
   )

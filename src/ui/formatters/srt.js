@@ -1,5 +1,5 @@
 function parseTimestampToSeconds(value) {
-  const match = value.trim().match(/^(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})$/)
+  const match = value.trim().match(/^(\d{2}):(\d{2}):(\d{2})[,.](\d{3})$/)
   if (!match) return null
 
   const [, hours, minutes, seconds, milliseconds] = match

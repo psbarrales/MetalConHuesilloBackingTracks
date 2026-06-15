@@ -11,5 +11,7 @@ export function createSong(song) {
     artist: song.artist,
     bpm: song.bpm,
     tracks,
+    baseUrl: song.baseUrl ?? `/audio/${song.slug}`,
+    custom: Boolean(song.custom),
   }
 }

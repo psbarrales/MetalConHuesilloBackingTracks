@@ -26,10 +26,70 @@ const songs = Object.entries(songCatalog)
       artist: song.artist ?? '',
       bpm: song.tempo ?? song.bpm ?? 120,
       tracks: song.tracks,
+      baseUrl: `/audio/${slug}`,
+      custom: false,
     })
   })
   .filter(Boolean)
   .sort(compareSongs)
+
+const API_BASE_URL = import.meta.env.VITE_STEM_SPLITTER_URL ?? 'http://localhost:4000'
+
+async function fetchCustomSongs() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/songs/custom`)
+    if (!response.ok) {
+      return []
+    }
+
+    const payload = await response.json()
+    return (payload.songs ?? []).map((song) =>
+      createSong({
+        id: song.id,
+        slug: song.slug,
+        title: song.title,
+        artist: song.artist ?? '',
+        bpm: song.tempo ?? song.bpm ?? 120,
+        tracks: song.tracks,
+        baseUrl: song.baseUrl,
+        custom: true,
+      }),
+    )
+  } catch {
+    return []
+  }
+}
+
+export const songRepository = {
+  async listSongs() {
+    const customSongs = await fetchCustomSongs()
+    return [...songs, ...customSongs].sort(compareSongs)
+  },
+
+  async createCustomSong({ file, title, artist, tempo }) {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (title) formData.append('title', title)
+    if (artist) formData.append('artist', artist)
+    if (tempo) formData.append('tempo', tempo)
+
+    const response = await fetch(`${API_BASE_URL}/songs/custom`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(payload.error ?? 'No se pudo crear la canción.')
+    }
+
+    return createSong({
+      ...payload.song,
+      bpm: payload.song?.tempo ?? payload.song?.bpm ?? 120,
+      custom: true,
+    })
+  },
+}
 
 export const inMemorySongRepository = {
   listSongs() {
