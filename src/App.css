@@ -164,6 +164,32 @@
   justify-self: start;
 }
 
+.song-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.secondary-action {
+  background: linear-gradient(180deg, #343436, #19191b);
+  border-color: #5e5858;
+}
+
+.danger-action {
+  border-color: #ff9a8d;
+  background: linear-gradient(180deg, #9f3028, #571a19);
+  color: #fff;
+}
+
+.form-danger-action {
+  min-height: 40px;
+  border-radius: 11px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 800;
+  align-self: end;
+}
+
 .custom-song-form button:disabled {
   opacity: 0.6;
   cursor: wait;
@@ -373,8 +399,48 @@
   letter-spacing: 0.11em;
 }
 
-.timeline {
+.timeline-panel {
   margin-top: 16px;
+}
+
+.timeline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.ab-loop-button,
+.ab-clear-button {
+  min-height: 34px;
+  border-radius: 10px;
+  border: 1px solid #4f4a4a;
+  padding: 8px 11px;
+  background: linear-gradient(180deg, #2a2a2b, #171719);
+  color: #f2eeea;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.ab-loop-button.is-active {
+  border-color: #ff8a50;
+  background: linear-gradient(180deg, #f26219 0%, #bb3507 100%);
+}
+
+.ab-clear-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ab-loop-readout {
+  color: #ffd198;
+  font-family: 'IBM Plex Mono', 'Menlo', monospace;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.timeline {
   display: grid;
   grid-template-columns: 62px 1fr 62px;
   align-items: center;
@@ -385,6 +451,56 @@
   font-family: 'IBM Plex Mono', 'Menlo', monospace;
   color: #f3eded;
   font-size: 0.9rem;
+}
+
+.timeline-range-wrap {
+  position: relative;
+  display: grid;
+  align-items: center;
+  min-height: 34px;
+}
+
+.timeline-range-wrap input {
+  position: relative;
+  z-index: 2;
+}
+
+.timeline.is-ab-mode .timeline-range-wrap input {
+  cursor: crosshair;
+}
+
+.ab-loop-region {
+  position: absolute;
+  z-index: 1;
+  height: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(255, 138, 80, 0.38);
+  pointer-events: none;
+}
+
+.ab-marker {
+  position: absolute;
+  z-index: 3;
+  top: -4px;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #ff8a50;
+  border-radius: 50%;
+  background: #151516;
+  color: #fff4ea;
+  font-size: 0.72rem;
+  font-weight: 900;
+  pointer-events: none;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.36);
+}
+
+.ab-marker.is-b {
+  border-color: #ffd198;
 }
 
 .lyrics-panel {

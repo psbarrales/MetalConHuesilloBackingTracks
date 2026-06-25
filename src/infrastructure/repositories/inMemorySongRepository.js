@@ -114,6 +114,42 @@ export const songRepository = {
     return payload.song
   },
 
+  async updateCustomSong(slug, { title, artist, tempo, cover, raw, voz, guitarra, bajo, bateria }) {
+    const formData = new FormData()
+    formData.append('title', title)
+    formData.append('artist', artist ?? '')
+    formData.append('tempo', tempo ?? '')
+    if (cover) formData.append('cover', cover)
+    if (raw) formData.append('raw', raw)
+    if (voz) formData.append('voz', voz)
+    if (guitarra) formData.append('guitarra', guitarra)
+    if (bajo) formData.append('bajo', bajo)
+    if (bateria) formData.append('bateria', bateria)
+
+    const response = await fetch(`${API_BASE_URL}/songs/custom/${slug}`, {
+      method: 'PATCH',
+      body: formData,
+    })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(payload.error ?? 'No se pudo editar la canción.')
+    }
+
+    return payload.song
+  },
+
+  async deleteCustomSong(slug) {
+    const response = await fetch(`${API_BASE_URL}/songs/custom/${slug}`, {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}))
+      throw new Error(payload.error ?? 'No se pudo eliminar la canción.')
+    }
+  },
+
   async getCustomSongStatus(slug) {
     const response = await fetch(`${API_BASE_URL}/songs/custom/${slug}/status`)
     const payload = await response.json().catch(() => ({}))

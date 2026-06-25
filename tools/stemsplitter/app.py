@@ -29,6 +29,7 @@ CUSTOM_TRACK_MAP = {
     "drums": "bateria",
     "other": "guitarra",
 }
+TRACK_ORDER = ["voz", "guitarra", "bajo", "bateria"]
 
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -156,6 +157,14 @@ def write_song_manifest(song_dir: Path, song: dict) -> None:
         file_handle.write("\n")
 
 
+def get_custom_song_dir(slug: str) -> Path | None:
+    song_dir = (CUSTOM_SONGS_ROOT / slug).resolve()
+    custom_root = CUSTOM_SONGS_ROOT.resolve()
+    if custom_root not in song_dir.parents or not song_dir.is_dir():
+        return None
+    return song_dir
+
+
 def song_response(song: dict) -> dict:
     slug = song["slug"]
     return {
@@ -211,6 +220,31 @@ def save_uploaded_cover(song_dir: Path) -> str | None:
 
     cover_file.save(song_dir / "portada.png")
     return "portada.png"
+
+
+def save_uploaded_raw(song_dir: Path) -> Path | None:
+    raw_file = request.files.get("raw")
+    if raw_file is None or raw_file.filename == "":
+        return None
+
+    if not allowed_file(raw_file.filename):
+        raise ValueError("Invalid raw file format")
+
+    filename = secure_filename(raw_file.filename)
+    if not filename:
+        raise ValueError("Invalid raw filename")
+
+    suffix = Path(filename).suffix.lower()
+    for existing_raw in song_dir.glob("raw.*"):
+        existing_raw.unlink(missing_ok=True)
+
+    raw_path = song_dir / f"raw{suffix}"
+    raw_file.save(raw_path)
+    return raw_path
+
+
+def sort_track_ids(track_ids: list[str]) -> list[str]:
+    return sorted(set(track_ids), key=lambda track_id: TRACK_ORDER.index(track_id) if track_id in TRACK_ORDER else 99)
 
 
 @app.get("/health")
@@ -356,7 +390,7 @@ def create_manual_custom_song():
     if not title:
         return jsonify(error="Title is required"), 400
 
-    required_tracks = ["voz", "guitarra", "bajo", "bateria"]
+    required_tracks = TRACK_ORDER
     missing_tracks = [
         track_id
         for track_id in required_tracks
@@ -394,9 +428,74 @@ def create_manual_custom_song():
     return jsonify(song=song_response(song)), 201
 
 
+@app.patch("/songs/custom/<slug>")
+def update_custom_song(slug):
+    song_dir = get_custom_song_dir(slug)
+    if song_dir is None:
+        return jsonify(error="Song not found"), 404
+
+    song = read_song_manifest(song_dir)
+    if song is None:
+        return jsonify(error="Song not found"), 404
+
+    next_title = request.form.get("title")
+    if next_title is not None:
+        next_title = next_title.strip()
+        if not next_title:
+            return jsonify(error="Title cannot be empty"), 400
+        song["title"] = next_title
+
+    next_artist = request.form.get("artist")
+    if next_artist is not None:
+        song["artist"] = next_artist.strip()
+
+    if "tempo" in request.form:
+        song["tempo"] = coerce_tempo(request.form.get("tempo"))
+
+    try:
+        save_uploaded_cover(song_dir)
+        uploaded_tracks = [
+            track_id
+            for track_id in TRACK_ORDER
+            if save_uploaded_track(track_id, song_dir) is not None
+        ]
+        raw_path = save_uploaded_raw(song_dir)
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+
+    existing_tracks = song.get("tracks") or []
+    if uploaded_tracks:
+        song["tracks"] = sort_track_ids(existing_tracks + uploaded_tracks)
+        song["sourceTracks"] = [f"{track_id}.mp3" for track_id in song["tracks"]]
+        song["status"] = "ready"
+        song["error"] = None
+
+    if raw_path is not None:
+        song.update({"status": "processing", "tracks": [], "sourceTracks": [], "error": None})
+        write_song_manifest(song_dir, song)
+        thread = threading.Thread(target=process_custom_song, args=(song_dir, raw_path, song), daemon=True)
+        thread.start()
+    else:
+        write_song_manifest(song_dir, song)
+
+    return jsonify(song=song_response(song))
+
+
+@app.delete("/songs/custom/<slug>")
+def delete_custom_song(slug):
+    song_dir = get_custom_song_dir(slug)
+    if song_dir is None:
+        return jsonify(error="Song not found"), 404
+
+    shutil.rmtree(song_dir, ignore_errors=True)
+    return "", 204
+
+
 @app.get("/songs/custom/<slug>/status")
 def get_custom_song_status(slug):
-    song_dir = CUSTOM_SONGS_ROOT / slug
+    song_dir = get_custom_song_dir(slug)
+    if song_dir is None:
+        return jsonify(error="Song not found"), 404
     song = read_song_manifest(song_dir)
     if song is None:
         return jsonify(error="Song not found"), 404
@@ -405,7 +504,9 @@ def get_custom_song_status(slug):
 
 @app.get("/songs/custom/<slug>/song.json")
 def get_custom_song_manifest(slug):
-    song_dir = CUSTOM_SONGS_ROOT / slug
+    song_dir = get_custom_song_dir(slug)
+    if song_dir is None:
+        return jsonify(error="Song not found"), 404
     song = read_song_manifest(song_dir)
     if song is None:
         return jsonify(error="Song not found"), 404
@@ -414,8 +515,8 @@ def get_custom_song_manifest(slug):
 
 @app.get("/songs/custom/<slug>/<path:filename>")
 def get_custom_song_file(slug, filename):
-    song_dir = CUSTOM_SONGS_ROOT / slug
-    if not song_dir.is_dir():
+    song_dir = get_custom_song_dir(slug)
+    if song_dir is None:
         return jsonify(error="Song not found"), 404
     return send_from_directory(song_dir, filename)
 

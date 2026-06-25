@@ -30,6 +30,18 @@ function App() {
     bateria: null,
   })
   const [isCustomSongModalOpen, setIsCustomSongModalOpen] = useState(false)
+  const [isEditSongModalOpen, setIsEditSongModalOpen] = useState(false)
+  const [editSongForm, setEditSongForm] = useState({
+    title: '',
+    artist: '',
+    tempo: '',
+    cover: null,
+    raw: null,
+    voz: null,
+    guitarra: null,
+    bajo: null,
+    bateria: null,
+  })
   const [customSongJob, setCustomSongJob] = useState(null)
   const [customSongStatus, setCustomSongStatus] = useState({ type: 'idle', message: '' })
 
@@ -48,6 +60,9 @@ function App() {
     volume,
     muteState,
     loadedTracks,
+    abLoopEnabled,
+    abLoopStart,
+    abLoopEnd,
     selectSong,
     togglePlayback,
     seekTo,
@@ -56,6 +71,9 @@ function App() {
     setPitchSemitones,
     setVolume,
     toggleMute,
+    toggleAbLoop,
+    clearAbLoop,
+    markAbLoopPoint,
     reloadSongs,
   } = useMultiTrackPlayer(songRepository)
 
@@ -239,8 +257,110 @@ function App() {
     setIsCustomSongModalOpen(false)
   }
 
+  function openEditSongModal() {
+    if (!currentSong?.custom) return
+
+    setEditSongForm({
+      title: currentSong.title ?? '',
+      artist: currentSong.artist ?? '',
+      tempo: currentSong.bpm ?? '',
+      cover: null,
+      raw: null,
+      voz: null,
+      guitarra: null,
+      bajo: null,
+      bateria: null,
+    })
+    setIsEditSongModalOpen(true)
+  }
+
+  function closeEditSongModal() {
+    setIsEditSongModalOpen(false)
+  }
+
   function setManualFile(field, file) {
     setManualSongForm((prev) => ({ ...prev, [field]: file }))
+  }
+
+  function setEditFile(field, file) {
+    setEditSongForm((prev) => ({ ...prev, [field]: file }))
+  }
+
+  async function handleEditCustomSong(event) {
+    event.preventDefault()
+    const form = event.currentTarget
+
+    if (!currentSong?.custom) {
+      setCustomSongStatus({ type: 'error', message: 'Solo se pueden editar canciones custom.' })
+      return
+    }
+
+    if (!editSongForm.title.trim()) {
+      setCustomSongStatus({ type: 'error', message: 'Ingresa el nombre de la canción.' })
+      return
+    }
+
+    setCustomSongStatus({ type: 'uploading', message: 'Guardando cambios de la canción.' })
+
+    try {
+      const song = await songRepository.updateCustomSong(currentSong.slug, editSongForm)
+      form.reset()
+      setEditSongForm({
+        title: '',
+        artist: '',
+        tempo: '',
+        cover: null,
+        raw: null,
+        voz: null,
+        guitarra: null,
+        bajo: null,
+        bateria: null,
+      })
+      setCustomSongJob(song)
+
+      if (song.status === 'processing') {
+        setCustomSongStatus({
+          type: 'processing',
+          message: `Cambios guardados (${song.id}). Separando nuevo raw en background.`,
+        })
+      } else {
+        const nextSongs = await reloadSongs()
+        const updatedSong = nextSongs.find((item) => item.id === song.id)
+        if (updatedSong) {
+          selectSong(updatedSong.id)
+        }
+        setCoverState({ songId: null, index: 0, loaded: true })
+        setCustomSongStatus({ type: 'success', message: `Canción actualizada: ${song.title}` })
+      }
+    } catch (error) {
+      setCustomSongStatus({
+        type: 'error',
+        message: error.message ?? 'No se pudo editar la canción.',
+      })
+    }
+  }
+
+  async function handleDeleteCustomSong() {
+    if (!currentSong?.custom) {
+      setCustomSongStatus({ type: 'error', message: 'Solo se pueden eliminar canciones custom.' })
+      return
+    }
+
+    const shouldDelete = window.confirm(`Eliminar "${currentSong.title}" y todos sus archivos custom?`)
+    if (!shouldDelete) return
+
+    try {
+      await songRepository.deleteCustomSong(currentSong.slug)
+      const nextSongs = await reloadSongs()
+      selectSong(nextSongs[0]?.id ?? null)
+      setCustomSongStatus({ type: 'success', message: `Canción eliminada: ${currentSong.title}` })
+      setIsEditSongModalOpen(false)
+    } catch (error) {
+      setCustomSongStatus({
+        type: 'error',
+        message: error.message ?? 'No se pudo eliminar la canción.',
+      })
+    }
   }
 
   const activeLyricIndex = lyrics.findIndex(
@@ -267,9 +387,21 @@ function App() {
         <div className="meta-row">
           <div className="song-actions">
             <SongSelector songs={songs} currentSongId={currentSongId} onSelect={selectSong} />
-            <button type="button" className="add-song-button" onClick={openCustomSongModal}>
-              Agregar canción
-            </button>
+            <div className="song-action-buttons">
+              <button type="button" className="add-song-button" onClick={openCustomSongModal}>
+                Agregar canción
+              </button>
+              {currentSong?.custom && (
+                <>
+                  <button type="button" className="add-song-button secondary-action" onClick={openEditSongModal}>
+                    Editar
+                  </button>
+                  <button type="button" className="add-song-button danger-action" onClick={handleDeleteCustomSong}>
+                    Eliminar
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="control-stack">
             <label className="volume-selector">
@@ -356,7 +488,17 @@ function App() {
           onToggleMute={toggleMute}
         />
 
-        <Timeline currentTime={currentTime} duration={duration} onSeek={seekTo} />
+        <Timeline
+          currentTime={currentTime}
+          duration={duration}
+          onSeek={seekTo}
+          abLoopEnabled={abLoopEnabled}
+          abLoopStart={abLoopStart}
+          abLoopEnd={abLoopEnd}
+          onToggleAbLoop={toggleAbLoop}
+          onClearAbLoop={clearAbLoop}
+          onMarkAbLoopPoint={markAbLoopPoint}
+        />
 
         <LyricsPanel
           hasLyrics={lyrics.length > 0}
@@ -545,6 +687,117 @@ function App() {
                 </button>
               </form>
             )}
+
+            {customSongStatus.message && (
+              <div className={`custom-song-status is-${customSongStatus.type}`}>
+                <p>{customSongStatus.message}</p>
+                {customSongJob?.slug && <small>Slug: {customSongJob.slug}</small>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isEditSongModalOpen && currentSong?.custom && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="custom-song-modal" role="dialog" aria-modal="true" aria-labelledby="edit-song-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="edit-song-title">Editar canción custom</h2>
+                <p>Cambia metadata, portada, stems o sube un raw nuevo para volver a separar.</p>
+              </div>
+              <button type="button" className="modal-close-button" onClick={closeEditSongModal}>
+                Cerrar
+              </button>
+            </div>
+
+            <form className="custom-song-form" onSubmit={handleEditCustomSong}>
+              <label>
+                Nombre
+                <input
+                  type="text"
+                  value={editSongForm.title}
+                  onChange={(event) => setEditSongForm((prev) => ({ ...prev, title: event.target.value }))}
+                />
+              </label>
+              <label>
+                Artista
+                <input
+                  type="text"
+                  value={editSongForm.artist}
+                  onChange={(event) => setEditSongForm((prev) => ({ ...prev, artist: event.target.value }))}
+                />
+              </label>
+              <label>
+                Tempo
+                <input
+                  type="number"
+                  min="40"
+                  max="220"
+                  step="1"
+                  value={editSongForm.tempo}
+                  placeholder="Opcional"
+                  onChange={(event) => setEditSongForm((prev) => ({ ...prev, tempo: event.target.value }))}
+                />
+              </label>
+              <label>
+                Portada nueva
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+                  onChange={(event) => setEditFile('cover', event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label>
+                Raw nuevo
+                <input
+                  type="file"
+                  accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,.mp3,.wav,.ogg,.flac"
+                  onChange={(event) => setEditFile('raw', event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label>
+                Voz mp3
+                <input
+                  type="file"
+                  accept="audio/mpeg,.mp3"
+                  onChange={(event) => setEditFile('voz', event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label>
+                Guitarra mp3
+                <input
+                  type="file"
+                  accept="audio/mpeg,.mp3"
+                  onChange={(event) => setEditFile('guitarra', event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label>
+                Bajo mp3
+                <input
+                  type="file"
+                  accept="audio/mpeg,.mp3"
+                  onChange={(event) => setEditFile('bajo', event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label>
+                Batería mp3
+                <input
+                  type="file"
+                  accept="audio/mpeg,.mp3"
+                  onChange={(event) => setEditFile('bateria', event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={customSongStatus.type === 'uploading' || customSongStatus.type === 'processing'}
+              >
+                {customSongStatus.type === 'uploading' ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+              <button type="button" className="danger-action form-danger-action" onClick={handleDeleteCustomSong}>
+                Eliminar canción
+              </button>
+            </form>
 
             {customSongStatus.message && (
               <div className={`custom-song-status is-${customSongStatus.type}`}>

@@ -19,6 +19,7 @@ const READY_STATE_ENOUGH_DATA = 4
 const TRACK_READY_TIMEOUT_MS = 15000
 const METRONOME_PROBE_TIMEOUT_MS = 2500
 const LAST_SONG_STORAGE_KEY = 'backingtrack:last-song-id'
+const MIN_AB_LOOP_LENGTH_S = 0.5
 
 function clampBpm(value) {
   if (!Number.isFinite(value)) return 120
@@ -139,6 +140,12 @@ function buildTrackUrl(song, trackId) {
   return `${song.baseUrl}/${trackId}.mp3`
 }
 
+function normalizeLoopPoint(value, duration) {
+  if (!Number.isFinite(value)) return 0
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Number.POSITIVE_INFINITY
+  return Math.max(0, Math.min(value, safeDuration))
+}
+
 export function useMultiTrackPlayer(songRepository) {
   const [songs, setSongs] = useState([])
   const [currentSongId, setCurrentSongId] = useState(() => {
@@ -153,6 +160,8 @@ export function useMultiTrackPlayer(songRepository) {
   const [muteState, setMuteState] = useState(buildInitialMuteState)
   const [loadedTracks, setLoadedTracks] = useState({})
   const [isPreparingPlayback, setIsPreparingPlayback] = useState(false)
+  const [abLoopEnabled, setAbLoopEnabled] = useState(false)
+  const [abLoopRange, setAbLoopRange] = useState({ start: null, end: null })
   /** Cuenta regresiva: 4 | 3 | 2 | 1 | null */
   const [countIn, setCountIn] = useState(null)
 
@@ -169,6 +178,8 @@ export function useMultiTrackPlayer(songRepository) {
   const volumeRef = useRef(volume)
   const currentSongRef = useRef(null)
   const playbackRateRef = useRef(1)
+  const abLoopEnabledRef = useRef(abLoopEnabled)
+  const abLoopRangeRef = useRef(abLoopRange)
 
   const reloadSongs = useCallback(async () => {
     const nextSongs = await songRepository.listSongs()
@@ -200,6 +211,14 @@ export function useMultiTrackPlayer(songRepository) {
   useEffect(() => {
     volumeRef.current = volume
   }, [volume])
+
+  useEffect(() => {
+    abLoopEnabledRef.current = abLoopEnabled
+  }, [abLoopEnabled])
+
+  useEffect(() => {
+    abLoopRangeRef.current = abLoopRange
+  }, [abLoopRange])
 
   const currentSong = useMemo(
     () => songs.find((s) => s.id === currentSongId) ?? null,
@@ -291,6 +310,7 @@ export function useMultiTrackPlayer(songRepository) {
     setCurrentTime(0)
     setDuration(0)
     setLoadedTracks({})
+    setAbLoopRange({ start: null, end: null })
     useAudioMetronomeRef.current = false
     metronomeEngine.setMuted(muteStateRef.current.metronomo ?? true)
 
@@ -412,6 +432,23 @@ export function useMultiTrackPlayer(songRepository) {
   }, [effectivePitchSemitones, metronomeBpm, playbackRate])
 
   // ─── Loop de seguimiento de tiempo + corrección de deriva ─────────────────
+  const seekElementsTo = useCallback((time) => {
+    for (const audio of Object.values(audioElementsRef.current)) {
+      audio.currentTime = time
+    }
+    setCurrentTime(time)
+  }, [])
+
+  const restartSyntheticMetronomeAt = useCallback((time, bpm) => {
+    if (!isPlayingRef.current || useAudioMetronomeRef.current) {
+      return
+    }
+
+    metronomeEngine.stop()
+    const metronomePosition = time / playbackRateRef.current
+    metronomeEngine.start(bpm, metronomePosition)
+  }, [])
+
   const syncSlaveTracks = useCallback((thresholdS) => {
     const master = audioElementsRef.current[masterIdRef.current]
     if (!master) return
@@ -441,7 +478,20 @@ export function useMultiTrackPlayer(songRepository) {
     const tick = () => {
       const master = audioElementsRef.current[masterIdRef.current]
       if (master) {
-        setCurrentTime(master.currentTime)
+        const { start, end } = abLoopRangeRef.current
+        const shouldLoop =
+          abLoopEnabledRef.current &&
+          Number.isFinite(start) &&
+          Number.isFinite(end) &&
+          end - start >= MIN_AB_LOOP_LENGTH_S &&
+          master.currentTime >= end
+
+        if (shouldLoop) {
+          seekElementsTo(start)
+          restartSyntheticMetronomeAt(start, metronomeBpm)
+        } else {
+          setCurrentTime(master.currentTime)
+        }
         syncSlaveTracks(SYNC_THRESHOLD_S)
       }
       animFrameRef.current = requestAnimationFrame(tick)
@@ -452,7 +502,7 @@ export function useMultiTrackPlayer(songRepository) {
     }, RESYNC_INTERVAL_MS)
 
     animFrameRef.current = requestAnimationFrame(tick)
-  }, [syncSlaveTracks])
+  }, [metronomeBpm, restartSyntheticMetronomeAt, seekElementsTo, syncSlaveTracks])
 
   const stopTimeTracking = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
@@ -550,19 +600,14 @@ export function useMultiTrackPlayer(songRepository) {
   }, [isPlaying, metronomeBpm, startTimeTracking, stopTimeTracking])
 
   const seekTo = useCallback((time) => {
-    for (const audio of Object.values(audioElementsRef.current)) {
-      audio.currentTime = time
-    }
-    setCurrentTime(time)
+    seekElementsTo(time)
     if (isPlayingRef.current) {
       const bpm = metronomeBpm
       if (!useAudioMetronomeRef.current) {
-        metronomeEngine.stop()
-        const metronomePosition = time / playbackRateRef.current
-        metronomeEngine.start(bpm, metronomePosition)
+        restartSyntheticMetronomeAt(time, bpm)
       }
     }
-  }, [metronomeBpm])
+  }, [metronomeBpm, restartSyntheticMetronomeAt, seekElementsTo])
 
   const seekBy = useCallback(
     (delta) => {
@@ -592,6 +637,35 @@ export function useMultiTrackPlayer(songRepository) {
     setCurrentSongId(songId)
   }, [])
 
+  const toggleAbLoop = useCallback(() => {
+    setAbLoopEnabled((prev) => !prev)
+  }, [])
+
+  const clearAbLoop = useCallback(() => {
+    setAbLoopRange({ start: null, end: null })
+  }, [])
+
+  const markAbLoopPoint = useCallback(
+    (rawTime) => {
+      const time = normalizeLoopPoint(rawTime, duration)
+      setAbLoopRange((prev) => {
+        if (!Number.isFinite(prev.start) || Number.isFinite(prev.end)) {
+          return { start: time, end: null }
+        }
+
+        if (Math.abs(time - prev.start) < MIN_AB_LOOP_LENGTH_S) {
+          return { start: time, end: null }
+        }
+
+        return time > prev.start
+          ? { start: prev.start, end: time }
+          : { start: time, end: prev.start }
+      })
+      seekTo(time)
+    },
+    [duration, seekTo],
+  )
+
   return {
     songs,
     currentSong,
@@ -608,6 +682,9 @@ export function useMultiTrackPlayer(songRepository) {
     volume,
     muteState,
     loadedTracks,
+    abLoopEnabled,
+    abLoopStart: abLoopRange.start,
+    abLoopEnd: abLoopRange.end,
     selectSong,
     togglePlayback,
     seekTo,
@@ -616,6 +693,9 @@ export function useMultiTrackPlayer(songRepository) {
     setPitchSemitones: updatePitchSemitones,
     setVolume,
     toggleMute,
+    toggleAbLoop,
+    clearAbLoop,
+    markAbLoopPoint,
     reloadSongs,
   }
 }
