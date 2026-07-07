@@ -62,6 +62,7 @@ Build y run con compose:
 La app queda servida por Nginx con fallback para rutas SPA.
 La API queda expuesta en http://localhost:4000 y usa `api/Dockerfile`.
 Las canciones custom persisten en `./custom-songs`, montado en el contenedor como `/data/custom-songs`.
+Los checkpoints y controles MIDI persisten en SQLite en `./api-data/app.db`.
 
 La web lee la URL de la API desde `VITE_STEM_SPLITTER_URL`.
 En la imagen Docker web esta variable se inyecta al iniciar el contenedor en `/config.js`, por lo que puede configurarse como variable de ambiente de runtime en Railway.
@@ -83,6 +84,21 @@ La API separa los stems, crea `song.json`, guarda todo en `custom-songs/{slug}` 
 - `GET /songs/custom/{slug}/status`: estado de separación (`processing`, `ready` o `error`).
 - `GET /songs/custom/{slug}/song.json`: metadata de una canción custom.
 - `GET /songs/custom/{slug}/{archivo}`: archivos generados (`voz.mp3`, `guitarra.mp3`, `bajo.mp3`, `bateria.mp3`, etc.).
+
+## Checkpoints y MIDI
+
+La API guarda puntos de interes por canción en SQLite. Funcionan tanto para canciones estáticas como custom usando el `slug` de la canción.
+
+- `GET /songs/{slug}/checkpoints`: devuelve grupos, checkpoints y CC MIDI de la canción.
+- `PATCH /songs/{slug}/midi-controls`: guarda CC MIDI (`nextCc`, `prevCc`).
+- `POST /songs/{slug}/checkpoint-groups`: crea un grupo (`name`, `sortOrder`).
+- `PATCH /checkpoint-groups/{id}`: edita un grupo.
+- `DELETE /checkpoint-groups/{id}`: elimina un grupo y sus checkpoints.
+- `POST /checkpoint-groups/{id}/checkpoints`: crea un checkpoint (`label`, `time`, `sortOrder`).
+- `PATCH /checkpoints/{id}`: edita nombre, tiempo, orden o grupo.
+- `DELETE /checkpoints/{id}`: elimina un checkpoint.
+
+En la interfaz, el botón `Activar MIDI` pide permiso Web MIDI al navegador. Un mensaje MIDI Control Change con el CC configurado para Next o Prev salta al checkpoint siguiente o anterior del grupo activo.
 
 Flujo esperado por canción:
 

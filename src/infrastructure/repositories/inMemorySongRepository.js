@@ -37,6 +37,28 @@ const runtimeConfig = typeof window === 'undefined' ? {} : window.__APP_CONFIG__
 const API_BASE_URL =
   runtimeConfig.VITE_STEM_SPLITTER_URL || import.meta.env.VITE_STEM_SPLITTER_URL || 'http://localhost:4000'
 
+async function requestJson(path, options = {}) {
+  let response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+        ...options.headers,
+      },
+    })
+  } catch {
+    throw new Error(`API no disponible en ${API_BASE_URL}. Levanta o reconstruye el servicio API.`)
+  }
+
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(payload.error ?? 'No se pudo completar la operación.')
+  }
+
+  return payload
+}
+
 async function fetchCustomSongs() {
   try {
     const response = await fetch(`${API_BASE_URL}/songs/custom`)
@@ -159,6 +181,61 @@ export const songRepository = {
     }
 
     return payload.song
+  },
+
+  async getSongCheckpoints(slug) {
+    return requestJson(`/songs/${encodeURIComponent(slug)}/checkpoints`)
+  },
+
+  async updateSongMidiControls(slug, midiControls) {
+    return requestJson(`/songs/${encodeURIComponent(slug)}/midi-controls`, {
+      method: 'PATCH',
+      body: JSON.stringify(midiControls),
+    })
+  },
+
+  async createCheckpointGroup(slug, group) {
+    return requestJson(`/songs/${encodeURIComponent(slug)}/checkpoint-groups`, {
+      method: 'POST',
+      body: JSON.stringify(group),
+    })
+  },
+
+  async updateCheckpointGroup(groupId, group) {
+    return requestJson(`/checkpoint-groups/${groupId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(group),
+    })
+  },
+
+  async deleteCheckpointGroup(groupId) {
+    const response = await fetch(`${API_BASE_URL}/checkpoint-groups/${groupId}`, { method: 'DELETE' })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}))
+      throw new Error(payload.error ?? 'No se pudo eliminar el grupo.')
+    }
+  },
+
+  async createCheckpoint(groupId, checkpoint) {
+    return requestJson(`/checkpoint-groups/${groupId}/checkpoints`, {
+      method: 'POST',
+      body: JSON.stringify(checkpoint),
+    })
+  },
+
+  async updateCheckpoint(checkpointId, checkpoint) {
+    return requestJson(`/checkpoints/${checkpointId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(checkpoint),
+    })
+  },
+
+  async deleteCheckpoint(checkpointId) {
+    const response = await fetch(`${API_BASE_URL}/checkpoints/${checkpointId}`, { method: 'DELETE' })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}))
+      throw new Error(payload.error ?? 'No se pudo eliminar el checkpoint.')
+    }
   },
 }
 

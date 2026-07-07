@@ -3,10 +3,12 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess as sp
 import tempfile
 import threading
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from flask import Flask, after_this_request, jsonify, request, send_file, send_from_directory
@@ -19,10 +21,13 @@ APP_ROOT = Path(__file__).resolve().parent
 UPLOAD_ROOT = APP_ROOT / "uploads"
 OUTPUT_ROOT = APP_ROOT / "separated"
 CUSTOM_SONGS_ROOT = Path(os.environ.get("CUSTOM_SONGS_ROOT", APP_ROOT / "custom-songs"))
+APP_DB_PATH = Path(os.environ.get("APP_DB_PATH", CUSTOM_SONGS_ROOT.parent / "app.db"))
 ALLOWED_EXTENSIONS = {"mp3", "wav", "ogg", "flac"}
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 MODEL_NAME = os.environ.get("DEMUCS_MODEL", "htdemucs")
 OUTPUT_MP3_BITRATE = os.environ.get("DEMUCS_MP3_BITRATE", "320")
+DEFAULT_NEXT_CC = 21
+DEFAULT_PREV_CC = 22
 CUSTOM_TRACK_MAP = {
     "vocals": "voz",
     "bass": "bajo",
@@ -34,9 +39,60 @@ TRACK_ORDER = ["voz", "guitarra", "bajo", "bateria"]
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 CUSTOM_SONGS_ROOT.mkdir(parents=True, exist_ok=True)
+APP_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 CORS(app)
+
+
+@contextmanager
+def get_db_connection():
+    connection = sqlite3.connect(APP_DB_PATH)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield connection
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def init_db() -> None:
+    with get_db_connection() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS song_midi_controls (
+                song_slug TEXT PRIMARY KEY,
+                next_cc INTEGER NOT NULL DEFAULT 21,
+                prev_cc INTEGER NOT NULL DEFAULT 22
+            );
+
+            CREATE TABLE IF NOT EXISTS checkpoint_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                song_slug TEXT NOT NULL,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                time_seconds REAL NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (group_id) REFERENCES checkpoint_groups(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_checkpoint_groups_song_slug
+                ON checkpoint_groups(song_slug, sort_order, id);
+
+            CREATE INDEX IF NOT EXISTS idx_checkpoints_group_id
+                ON checkpoints(group_id, sort_order, time_seconds, id);
+            """
+        )
+
+
+init_db()
 
 
 def allowed_file(filename: str) -> bool:
@@ -245,6 +301,288 @@ def save_uploaded_raw(song_dir: Path) -> Path | None:
 
 def sort_track_ids(track_ids: list[str]) -> list[str]:
     return sorted(set(track_ids), key=lambda track_id: TRACK_ORDER.index(track_id) if track_id in TRACK_ORDER else 99)
+
+
+def coerce_midi_cc(value, default_value: int) -> int:
+    try:
+        cc = int(value)
+    except (TypeError, ValueError):
+        return default_value
+    return cc if 0 <= cc <= 127 else default_value
+
+
+def coerce_checkpoint_time(value):
+    try:
+        time_seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return time_seconds if time_seconds >= 0 else None
+
+
+def coerce_sort_order(value, default_value: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default_value
+
+
+def get_song_checkpoint_payload(song_slug: str) -> dict:
+    with get_db_connection() as connection:
+        midi_row = connection.execute(
+            "SELECT next_cc, prev_cc FROM song_midi_controls WHERE song_slug = ?",
+            (song_slug,),
+        ).fetchone()
+        groups = connection.execute(
+            """
+            SELECT id, name, sort_order
+            FROM checkpoint_groups
+            WHERE song_slug = ?
+            ORDER BY sort_order, id
+            """,
+            (song_slug,),
+        ).fetchall()
+        group_ids = [group["id"] for group in groups]
+        checkpoints_by_group = {group_id: [] for group_id in group_ids}
+
+        if group_ids:
+            placeholders = ",".join("?" for _ in group_ids)
+            checkpoint_rows = connection.execute(
+                f"""
+                SELECT id, group_id, label, time_seconds, sort_order
+                FROM checkpoints
+                WHERE group_id IN ({placeholders})
+                ORDER BY group_id, sort_order, time_seconds, id
+                """,
+                group_ids,
+            ).fetchall()
+            for row in checkpoint_rows:
+                checkpoints_by_group[row["group_id"]].append(
+                    {
+                        "id": row["id"],
+                        "label": row["label"],
+                        "time": row["time_seconds"],
+                        "sortOrder": row["sort_order"],
+                    }
+                )
+
+        return {
+            "songSlug": song_slug,
+            "midi": {
+                "nextCc": midi_row["next_cc"] if midi_row else DEFAULT_NEXT_CC,
+                "prevCc": midi_row["prev_cc"] if midi_row else DEFAULT_PREV_CC,
+            },
+            "groups": [
+                {
+                    "id": group["id"],
+                    "name": group["name"],
+                    "sortOrder": group["sort_order"],
+                    "checkpoints": checkpoints_by_group[group["id"]],
+                }
+                for group in groups
+            ],
+        }
+
+
+def checkpoint_group_belongs_to_song(group_id: int, song_slug: str | None = None):
+    with get_db_connection() as connection:
+        if song_slug is None:
+            return connection.execute(
+                "SELECT id, song_slug FROM checkpoint_groups WHERE id = ?",
+                (group_id,),
+            ).fetchone()
+        return connection.execute(
+            "SELECT id, song_slug FROM checkpoint_groups WHERE id = ? AND song_slug = ?",
+            (group_id, song_slug),
+        ).fetchone()
+
+
+@app.get("/songs/<slug>/checkpoints")
+def get_song_checkpoints(slug):
+    return jsonify(get_song_checkpoint_payload(slug))
+
+
+@app.patch("/songs/<slug>/midi-controls")
+def update_song_midi_controls(slug):
+    payload = request.get_json(silent=True) or {}
+    current = get_song_checkpoint_payload(slug)["midi"]
+    next_cc = coerce_midi_cc(payload.get("nextCc"), current["nextCc"])
+    prev_cc = coerce_midi_cc(payload.get("prevCc"), current["prevCc"])
+
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO song_midi_controls (song_slug, next_cc, prev_cc)
+            VALUES (?, ?, ?)
+            ON CONFLICT(song_slug) DO UPDATE SET next_cc = excluded.next_cc, prev_cc = excluded.prev_cc
+            """,
+            (slug, next_cc, prev_cc),
+        )
+
+    return jsonify(get_song_checkpoint_payload(slug))
+
+
+@app.post("/songs/<slug>/checkpoint-groups")
+def create_checkpoint_group(slug):
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return jsonify(error="Group name is required"), 400
+
+    sort_order = coerce_sort_order(payload.get("sortOrder"))
+    with get_db_connection() as connection:
+        cursor = connection.execute(
+            "INSERT INTO checkpoint_groups (song_slug, name, sort_order) VALUES (?, ?, ?)",
+            (slug, name, sort_order),
+        )
+        group_id = cursor.lastrowid
+
+    return jsonify(group={"id": group_id, "name": name, "sortOrder": sort_order, "checkpoints": []}), 201
+
+
+@app.patch("/checkpoint-groups/<int:group_id>")
+def update_checkpoint_group(group_id):
+    group = checkpoint_group_belongs_to_song(group_id)
+    if group is None:
+        return jsonify(error="Checkpoint group not found"), 404
+
+    payload = request.get_json(silent=True) or {}
+    updates = []
+    values = []
+
+    if "name" in payload:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            return jsonify(error="Group name cannot be empty"), 400
+        updates.append("name = ?")
+        values.append(name)
+
+    if "sortOrder" in payload:
+        updates.append("sort_order = ?")
+        values.append(coerce_sort_order(payload.get("sortOrder")))
+
+    if updates:
+        values.append(group_id)
+        with get_db_connection() as connection:
+            connection.execute(f"UPDATE checkpoint_groups SET {', '.join(updates)} WHERE id = ?", values)
+
+    return jsonify(get_song_checkpoint_payload(group["song_slug"]))
+
+
+@app.delete("/checkpoint-groups/<int:group_id>")
+def delete_checkpoint_group(group_id):
+    group = checkpoint_group_belongs_to_song(group_id)
+    if group is None:
+        return jsonify(error="Checkpoint group not found"), 404
+
+    with get_db_connection() as connection:
+        connection.execute("DELETE FROM checkpoint_groups WHERE id = ?", (group_id,))
+
+    return "", 204
+
+
+@app.post("/checkpoint-groups/<int:group_id>/checkpoints")
+def create_checkpoint(group_id):
+    group = checkpoint_group_belongs_to_song(group_id)
+    if group is None:
+        return jsonify(error="Checkpoint group not found"), 404
+
+    payload = request.get_json(silent=True) or {}
+    label = str(payload.get("label") or "").strip()
+    time_seconds = coerce_checkpoint_time(payload.get("time"))
+    if not label:
+        return jsonify(error="Checkpoint label is required"), 400
+    if time_seconds is None:
+        return jsonify(error="Checkpoint time must be a positive number"), 400
+
+    sort_order = coerce_sort_order(payload.get("sortOrder"))
+    with get_db_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO checkpoints (group_id, label, time_seconds, sort_order)
+            VALUES (?, ?, ?, ?)
+            """,
+            (group_id, label, time_seconds, sort_order),
+        )
+        checkpoint_id = cursor.lastrowid
+
+    return jsonify(
+        checkpoint={"id": checkpoint_id, "label": label, "time": time_seconds, "sortOrder": sort_order}
+    ), 201
+
+
+@app.patch("/checkpoints/<int:checkpoint_id>")
+def update_checkpoint(checkpoint_id):
+    with get_db_connection() as connection:
+        checkpoint = connection.execute(
+            """
+            SELECT checkpoints.id, checkpoint_groups.song_slug
+            FROM checkpoints
+            JOIN checkpoint_groups ON checkpoint_groups.id = checkpoints.group_id
+            WHERE checkpoints.id = ?
+            """,
+            (checkpoint_id,),
+        ).fetchone()
+    if checkpoint is None:
+        return jsonify(error="Checkpoint not found"), 404
+
+    payload = request.get_json(silent=True) or {}
+    updates = []
+    values = []
+
+    if "label" in payload:
+        label = str(payload.get("label") or "").strip()
+        if not label:
+            return jsonify(error="Checkpoint label cannot be empty"), 400
+        updates.append("label = ?")
+        values.append(label)
+
+    if "time" in payload:
+        time_seconds = coerce_checkpoint_time(payload.get("time"))
+        if time_seconds is None:
+            return jsonify(error="Checkpoint time must be a positive number"), 400
+        updates.append("time_seconds = ?")
+        values.append(time_seconds)
+
+    if "sortOrder" in payload:
+        updates.append("sort_order = ?")
+        values.append(coerce_sort_order(payload.get("sortOrder")))
+
+    if "groupId" in payload:
+        next_group_id = payload.get("groupId")
+        try:
+            next_group_id = int(next_group_id)
+        except (TypeError, ValueError):
+            return jsonify(error="Invalid checkpoint group"), 400
+        if checkpoint_group_belongs_to_song(next_group_id, checkpoint["song_slug"]) is None:
+            return jsonify(error="Checkpoint group not found for this song"), 400
+        updates.append("group_id = ?")
+        values.append(next_group_id)
+
+    if updates:
+        values.append(checkpoint_id)
+        with get_db_connection() as connection:
+            connection.execute(f"UPDATE checkpoints SET {', '.join(updates)} WHERE id = ?", values)
+
+    return jsonify(get_song_checkpoint_payload(checkpoint["song_slug"]))
+
+
+@app.delete("/checkpoints/<int:checkpoint_id>")
+def delete_checkpoint(checkpoint_id):
+    with get_db_connection() as connection:
+        checkpoint = connection.execute(
+            """
+            SELECT checkpoints.id, checkpoint_groups.song_slug
+            FROM checkpoints
+            JOIN checkpoint_groups ON checkpoint_groups.id = checkpoints.group_id
+            WHERE checkpoints.id = ?
+            """,
+            (checkpoint_id,),
+        ).fetchone()
+        if checkpoint is None:
+            return jsonify(error="Checkpoint not found"), 404
+        connection.execute("DELETE FROM checkpoints WHERE id = ?", (checkpoint_id,))
+
+    return "", 204
 
 
 @app.get("/health")

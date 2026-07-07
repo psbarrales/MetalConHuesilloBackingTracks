@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+__pycache__/
 dist
 dist-ssr
 *.local
@@ -30,3 +31,7 @@ dist-ssr
 
 # Docker
 docker-compose.override.yml
+api-data/
+
+.venv
+__pycache__/

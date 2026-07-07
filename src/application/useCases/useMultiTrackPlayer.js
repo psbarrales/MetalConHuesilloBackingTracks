@@ -21,6 +21,12 @@ const METRONOME_PROBE_TIMEOUT_MS = 2500
 const LAST_SONG_STORAGE_KEY = 'backingtrack:last-song-id'
 const MIN_AB_LOOP_LENGTH_S = 0.5
 const DEFAULT_COUNT_IN_BEATS = 4
+const CHECKPOINT_EPSILON_S = 0.25
+const DEFAULT_CHECKPOINTS = {
+  songSlug: null,
+  midi: { nextCc: 21, prevCc: 22 },
+  groups: [],
+}
 const TRACK_PAN_VALUES = {
   left: -1,
   stereo: 0,
@@ -161,6 +167,25 @@ function normalizeLoopPoint(value, duration) {
   return Math.max(0, Math.min(value, safeDuration))
 }
 
+function sortCheckpoints(checkpoints) {
+  return [...(checkpoints ?? [])].sort((left, right) => {
+    const orderDelta = (left.sortOrder ?? 0) - (right.sortOrder ?? 0)
+    if (orderDelta !== 0) return orderDelta
+    return (left.time ?? 0) - (right.time ?? 0)
+  })
+}
+
+function normalizeCheckpointPayload(payload) {
+  return {
+    ...payload,
+    midi: payload?.midi ?? DEFAULT_CHECKPOINTS.midi,
+    groups: (payload?.groups ?? []).map((group) => ({
+      ...group,
+      checkpoints: sortCheckpoints(group.checkpoints),
+    })),
+  }
+}
+
 export function useMultiTrackPlayer(songRepository) {
   const [songs, setSongs] = useState([])
   const [currentSongId, setCurrentSongId] = useState(() => {
@@ -178,6 +203,9 @@ export function useMultiTrackPlayer(songRepository) {
   const [isPreparingPlayback, setIsPreparingPlayback] = useState(false)
   const [abLoopEnabled, setAbLoopEnabled] = useState(false)
   const [abLoopRange, setAbLoopRange] = useState({ start: null, end: null })
+  const [checkpoints, setCheckpoints] = useState(DEFAULT_CHECKPOINTS)
+  const [selectedCheckpointGroupId, setSelectedCheckpointGroupId] = useState(null)
+  const [checkpointStatus, setCheckpointStatus] = useState({ type: 'idle', message: '' })
   /** Cuenta regresiva: 4 | 3 | 2 | 1 | null */
   const [countIn, setCountIn] = useState(null)
 
@@ -195,6 +223,7 @@ export function useMultiTrackPlayer(songRepository) {
   const panStateRef = useRef(panState)
   const volumeRef = useRef(volume)
   const currentSongRef = useRef(null)
+  const currentTimeRef = useRef(0)
   const playbackRateRef = useRef(1)
   const abLoopEnabledRef = useRef(abLoopEnabled)
   const abLoopRangeRef = useRef(abLoopRange)
@@ -233,6 +262,10 @@ export function useMultiTrackPlayer(songRepository) {
   useEffect(() => {
     volumeRef.current = volume
   }, [volume])
+
+  useEffect(() => {
+    currentTimeRef.current = currentTime
+  }, [currentTime])
 
   useEffect(() => {
     abLoopEnabledRef.current = abLoopEnabled
@@ -295,6 +328,54 @@ export function useMultiTrackPlayer(songRepository) {
   useEffect(() => {
     currentSongRef.current = currentSong
   }, [currentSong])
+
+  const loadSongCheckpoints = useCallback(
+    async (songSlug) => {
+      if (!songSlug || !songRepository.getSongCheckpoints) {
+        setCheckpoints(DEFAULT_CHECKPOINTS)
+        setSelectedCheckpointGroupId(null)
+        return DEFAULT_CHECKPOINTS
+      }
+
+      try {
+        const payload = await songRepository.getSongCheckpoints(songSlug)
+        const nextPayload = normalizeCheckpointPayload(payload)
+        setCheckpoints(nextPayload)
+        setSelectedCheckpointGroupId((prev) => {
+          if (nextPayload.groups.some((group) => String(group.id) === String(prev))) return prev
+          return nextPayload.groups[0]?.id ?? null
+        })
+        setCheckpointStatus({ type: 'idle', message: '' })
+        return nextPayload
+      } catch (error) {
+        setCheckpoints(DEFAULT_CHECKPOINTS)
+        setSelectedCheckpointGroupId(null)
+        setCheckpointStatus({
+          type: 'error',
+          message: error.message ?? 'No se pudieron cargar los checkpoints.',
+        })
+        return DEFAULT_CHECKPOINTS
+      }
+    },
+    [songRepository],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    const songSlug = currentSong?.slug
+
+    async function load() {
+      const payload = await loadSongCheckpoints(songSlug)
+      if (cancelled) return
+      return payload
+    }
+
+    load()
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentSong?.slug, loadSongCheckpoints])
 
   useEffect(() => {
     playbackRateRef.current = playbackRate
@@ -741,6 +822,210 @@ export function useMultiTrackPlayer(songRepository) {
     [duration, seekTo],
   )
 
+  const checkpointGroups = useMemo(() => checkpoints.groups ?? [], [checkpoints.groups])
+  const selectedCheckpointGroup = useMemo(() => {
+    return checkpointGroups.find((group) => String(group.id) === String(selectedCheckpointGroupId)) ?? null
+  }, [checkpointGroups, selectedCheckpointGroupId])
+  const activeCheckpoints = useMemo(
+    () => sortCheckpoints(selectedCheckpointGroup?.checkpoints ?? []),
+    [selectedCheckpointGroup],
+  )
+  const activeCheckpoint = useMemo(() => {
+    return activeCheckpoints.reduce((closest, checkpoint) => {
+      if (checkpoint.time > currentTime + CHECKPOINT_EPSILON_S) return closest
+      if (!closest || checkpoint.time > closest.time) return checkpoint
+      return closest
+    }, null)
+  }, [activeCheckpoints, currentTime])
+
+  const refreshCheckpoints = useCallback(async () => {
+    return loadSongCheckpoints(currentSongRef.current?.slug)
+  }, [loadSongCheckpoints])
+
+  const seekToCheckpoint = useCallback(
+    (checkpoint) => {
+      if (!checkpoint || !Number.isFinite(checkpoint.time)) return
+      seekTo(Math.max(0, checkpoint.time))
+    },
+    [seekTo],
+  )
+
+  const goToNextCheckpoint = useCallback(() => {
+    if (!activeCheckpoints.length) return
+    const position = currentTimeRef.current
+    const next = activeCheckpoints.find((checkpoint) => checkpoint.time > position + CHECKPOINT_EPSILON_S)
+    seekToCheckpoint(next ?? activeCheckpoints[0])
+  }, [activeCheckpoints, seekToCheckpoint])
+
+  const goToPrevCheckpoint = useCallback(() => {
+    if (!activeCheckpoints.length) return
+    const position = currentTimeRef.current
+    const previous = [...activeCheckpoints]
+      .reverse()
+      .find((checkpoint) => checkpoint.time < position - CHECKPOINT_EPSILON_S)
+    seekToCheckpoint(previous ?? activeCheckpoints[activeCheckpoints.length - 1])
+  }, [activeCheckpoints, seekToCheckpoint])
+
+  const createCheckpointGroup = useCallback(
+    async (name) => {
+      if (!currentSongRef.current?.slug || !songRepository.createCheckpointGroup) return null
+      setCheckpointStatus({ type: 'saving', message: 'Guardando grupo...' })
+
+      try {
+        const response = await songRepository.createCheckpointGroup(currentSongRef.current.slug, {
+          name,
+          sortOrder: checkpointGroups.length,
+        })
+        const group = response.group
+        if (group) {
+          setCheckpoints((prev) => normalizeCheckpointPayload({
+            ...prev,
+            groups: [...(prev.groups ?? []), group],
+          }))
+          setSelectedCheckpointGroupId(group.id)
+        }
+        await refreshCheckpoints()
+        setCheckpointStatus({ type: 'success', message: 'Grupo guardado.' })
+        return group
+      } catch (error) {
+        setCheckpointStatus({
+          type: 'error',
+          message: error.message ?? 'No se pudo guardar el grupo. Revisa que el API esté corriendo.',
+        })
+        return null
+      }
+    },
+    [checkpointGroups.length, refreshCheckpoints, songRepository],
+  )
+
+  const deleteCheckpointGroup = useCallback(
+    async (groupId) => {
+      if (!songRepository.deleteCheckpointGroup) return
+      setCheckpointStatus({ type: 'saving', message: 'Eliminando grupo...' })
+      try {
+        await songRepository.deleteCheckpointGroup(groupId)
+        setCheckpoints((prev) => normalizeCheckpointPayload({
+          ...prev,
+          groups: (prev.groups ?? []).filter((group) => String(group.id) !== String(groupId)),
+        }))
+        setSelectedCheckpointGroupId((prev) => (String(prev) === String(groupId) ? null : prev))
+        await refreshCheckpoints()
+        setCheckpointStatus({ type: 'success', message: 'Grupo eliminado.' })
+      } catch (error) {
+        setCheckpointStatus({
+          type: 'error',
+          message: error.message ?? 'No se pudo eliminar el grupo.',
+        })
+      }
+    },
+    [refreshCheckpoints, songRepository],
+  )
+
+  const addCheckpointAtCurrentTime = useCallback(
+    async (label) => {
+      if (!songRepository.createCheckpoint) return null
+      let groupId = selectedCheckpointGroupId
+      if (!groupId) {
+        const group = await createCheckpointGroup('General')
+        groupId = group?.id
+        if (groupId) setSelectedCheckpointGroupId(groupId)
+      }
+      if (!groupId) return null
+
+      setCheckpointStatus({ type: 'saving', message: 'Guardando checkpoint...' })
+      try {
+        const response = await songRepository.createCheckpoint(groupId, {
+          label,
+          time: currentTimeRef.current,
+          sortOrder: activeCheckpoints.length,
+        })
+        const checkpoint = response.checkpoint
+        if (checkpoint) {
+          setCheckpoints((prev) => normalizeCheckpointPayload({
+            ...prev,
+            groups: (prev.groups ?? []).map((group) => {
+              if (String(group.id) !== String(groupId)) return group
+              return { ...group, checkpoints: [...(group.checkpoints ?? []), checkpoint] }
+            }),
+          }))
+        }
+        await refreshCheckpoints()
+        setCheckpointStatus({ type: 'success', message: 'Checkpoint guardado.' })
+        return checkpoint
+      } catch (error) {
+        setCheckpointStatus({
+          type: 'error',
+          message: error.message ?? 'No se pudo guardar el checkpoint.',
+        })
+        return null
+      }
+    },
+    [activeCheckpoints.length, createCheckpointGroup, refreshCheckpoints, selectedCheckpointGroupId, songRepository],
+  )
+
+  const updateCheckpoint = useCallback(
+    async (checkpointId, updates) => {
+      if (!songRepository.updateCheckpoint) return
+      setCheckpointStatus({ type: 'saving', message: 'Actualizando checkpoint...' })
+      try {
+        await songRepository.updateCheckpoint(checkpointId, updates)
+        await refreshCheckpoints()
+        setCheckpointStatus({ type: 'success', message: 'Checkpoint actualizado.' })
+      } catch (error) {
+        setCheckpointStatus({
+          type: 'error',
+          message: error.message ?? 'No se pudo actualizar el checkpoint.',
+        })
+      }
+    },
+    [refreshCheckpoints, songRepository],
+  )
+
+  const deleteCheckpoint = useCallback(
+    async (checkpointId) => {
+      if (!songRepository.deleteCheckpoint) return
+      setCheckpointStatus({ type: 'saving', message: 'Eliminando checkpoint...' })
+      try {
+        await songRepository.deleteCheckpoint(checkpointId)
+        setCheckpoints((prev) => normalizeCheckpointPayload({
+          ...prev,
+          groups: (prev.groups ?? []).map((group) => ({
+            ...group,
+            checkpoints: (group.checkpoints ?? []).filter(
+              (checkpoint) => String(checkpoint.id) !== String(checkpointId),
+            ),
+          })),
+        }))
+        await refreshCheckpoints()
+        setCheckpointStatus({ type: 'success', message: 'Checkpoint eliminado.' })
+      } catch (error) {
+        setCheckpointStatus({
+          type: 'error',
+          message: error.message ?? 'No se pudo eliminar el checkpoint.',
+        })
+      }
+    },
+    [refreshCheckpoints, songRepository],
+  )
+
+  const updateCheckpointMidiControls = useCallback(
+    async (midiControls) => {
+      if (!currentSongRef.current?.slug || !songRepository.updateSongMidiControls) return
+      setCheckpointStatus({ type: 'saving', message: 'Guardando controles MIDI...' })
+      try {
+        const payload = await songRepository.updateSongMidiControls(currentSongRef.current.slug, midiControls)
+        setCheckpoints(normalizeCheckpointPayload(payload))
+        setCheckpointStatus({ type: 'success', message: 'Controles MIDI guardados.' })
+      } catch (error) {
+        setCheckpointStatus({
+          type: 'error',
+          message: error.message ?? 'No se pudieron guardar los controles MIDI.',
+        })
+      }
+    },
+    [songRepository],
+  )
+
   return {
     songs,
     currentSong,
@@ -761,6 +1046,13 @@ export function useMultiTrackPlayer(songRepository) {
     abLoopEnabled,
     abLoopStart: abLoopRange.start,
     abLoopEnd: abLoopRange.end,
+    checkpointGroups,
+    selectedCheckpointGroupId,
+    selectedCheckpointGroup,
+    activeCheckpoints,
+    activeCheckpoint,
+    checkpointMidiControls: checkpoints.midi,
+    checkpointStatus,
     selectSong,
     togglePlayback,
     seekTo,
@@ -773,6 +1065,17 @@ export function useMultiTrackPlayer(songRepository) {
     toggleAbLoop,
     clearAbLoop,
     markAbLoopPoint,
+    setSelectedCheckpointGroupId,
+    refreshCheckpoints,
+    createCheckpointGroup,
+    deleteCheckpointGroup,
+    addCheckpointAtCurrentTime,
+    updateCheckpoint,
+    deleteCheckpoint,
+    updateCheckpointMidiControls,
+    seekToCheckpoint,
+    goToNextCheckpoint,
+    goToPrevCheckpoint,
     reloadSongs,
   }
 }

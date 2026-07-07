@@ -10,6 +10,8 @@ export function Timeline({
   onToggleAbLoop,
   onClearAbLoop,
   onMarkAbLoopPoint,
+  checkpoints = [],
+  activeCheckpointId = null,
 }) {
   const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0
   const hasLoopStart = Number.isFinite(abLoopStart)
@@ -65,6 +67,17 @@ export function Timeline({
               style={{ left: `${loopStartPercent}%`, width: `${loopWidthPercent}%` }}
             />
           )}
+          {safeDuration > 0 && checkpoints.map((checkpoint) => {
+            const left = Math.max(0, Math.min(100, (checkpoint.time / safeDuration) * 100))
+            return (
+              <span
+                key={checkpoint.id}
+                className={`checkpoint-marker ${activeCheckpointId === checkpoint.id ? 'is-active' : ''}`}
+                style={{ left: `${left}%` }}
+                title={`${checkpoint.label} ${formatSeconds(checkpoint.time)}`}
+              />
+            )
+          })}
           <input
             type="range"
             min="0"

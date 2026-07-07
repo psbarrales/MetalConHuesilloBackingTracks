@@ -4,6 +4,7 @@ import { songRepository } from './infrastructure/repositories/inMemorySongReposi
 import { LyricsPanel } from './ui/components/LyricsPanel'
 import { SongSelector } from './ui/components/SongSelector'
 import { TrackMixer } from './ui/components/TrackMixer'
+import { CheckpointPanel } from './ui/components/CheckpointPanel'
 import { parseSrt } from './ui/formatters/srt'
 import { TransportControls } from './ui/components/TransportControls'
 import { Timeline } from './ui/components/Timeline'
@@ -31,6 +32,7 @@ function App() {
   })
   const [isCustomSongModalOpen, setIsCustomSongModalOpen] = useState(false)
   const [isEditSongModalOpen, setIsEditSongModalOpen] = useState(false)
+  const [isCheckpointPanelOpen, setIsCheckpointPanelOpen] = useState(false)
   const [editSongForm, setEditSongForm] = useState({
     title: '',
     artist: '',
@@ -64,6 +66,12 @@ function App() {
     abLoopEnabled,
     abLoopStart,
     abLoopEnd,
+    checkpointGroups,
+    selectedCheckpointGroupId,
+    activeCheckpoints,
+    activeCheckpoint,
+    checkpointMidiControls,
+    checkpointStatus,
     selectSong,
     togglePlayback,
     seekTo,
@@ -76,6 +84,16 @@ function App() {
     toggleAbLoop,
     clearAbLoop,
     markAbLoopPoint,
+    setSelectedCheckpointGroupId,
+    createCheckpointGroup,
+    deleteCheckpointGroup,
+    addCheckpointAtCurrentTime,
+    updateCheckpoint,
+    deleteCheckpoint,
+    updateCheckpointMidiControls,
+    seekToCheckpoint,
+    goToNextCheckpoint,
+    goToPrevCheckpoint,
     reloadSongs,
   } = useMultiTrackPlayer(songRepository)
 
@@ -502,7 +520,45 @@ function App() {
           onToggleAbLoop={toggleAbLoop}
           onClearAbLoop={clearAbLoop}
           onMarkAbLoopPoint={markAbLoopPoint}
+          checkpoints={activeCheckpoints}
+          activeCheckpointId={activeCheckpoint?.id}
         />
+
+        <div className="checkpoint-feature-bar">
+          <button
+            type="button"
+            className={`checkpoint-toggle-button ${isCheckpointPanelOpen ? 'is-active' : ''}`}
+            onClick={() => setIsCheckpointPanelOpen((prev) => !prev)}
+          >
+            {isCheckpointPanelOpen ? 'Ocultar checkpoints' : 'Activar checkpoints'}
+          </button>
+          <span>
+            {activeCheckpoint
+              ? `${activeCheckpoint.label} · ${activeCheckpoints.length} puntos`
+              : `${activeCheckpoints.length} checkpoints`}
+          </span>
+        </div>
+
+        {isCheckpointPanelOpen && (
+          <CheckpointPanel
+            groups={checkpointGroups}
+            selectedGroupId={selectedCheckpointGroupId}
+            activeCheckpoints={activeCheckpoints}
+            activeCheckpoint={activeCheckpoint}
+            midiControls={checkpointMidiControls}
+            status={checkpointStatus}
+            onSelectGroup={setSelectedCheckpointGroupId}
+            onCreateGroup={createCheckpointGroup}
+            onDeleteGroup={deleteCheckpointGroup}
+            onAddCheckpoint={addCheckpointAtCurrentTime}
+            onUpdateCheckpoint={updateCheckpoint}
+            onDeleteCheckpoint={deleteCheckpoint}
+            onUpdateMidiControls={updateCheckpointMidiControls}
+            onSeekCheckpoint={seekToCheckpoint}
+            onNextCheckpoint={goToNextCheckpoint}
+            onPrevCheckpoint={goToPrevCheckpoint}
+          />
+        )}
 
         <LyricsPanel
           hasLyrics={lyrics.length > 0}
@@ -510,15 +566,16 @@ function App() {
           nextLine={nextLyric?.text ?? ''}
         />
 
-        <TransportControls
-          isPlaying={isPlaying}
-          isPreparing={isPreparingPlayback}
-          countIn={countIn}
-          onToggle={togglePlayback}
-          onBackward={() => seekBy(-10)}
-          onForward={() => seekBy(10)}
-        />
       </section>
+
+      <TransportControls
+        isPlaying={isPlaying}
+        isPreparing={isPreparingPlayback}
+        countIn={countIn}
+        onToggle={togglePlayback}
+        onBackward={() => seekBy(-10)}
+        onForward={() => seekBy(10)}
+      />
 
       <footer>
         <p>Usa el botón de canciones custom o coloca archivos en <code>/public/audio/&lt;slug&gt;/voz.mp3</code>, <code>guitarra.mp3</code>, <code>bajo.mp3</code>, <code>bateria.mp3</code> y opcionalmente <code>lyrics.srt</code></p>

@@ -15,7 +15,9 @@ services:
     container_name: backing-tracking-stemsplitter
     environment:
       CUSTOM_SONGS_ROOT: /data/custom-songs
+      APP_DB_PATH: /data/app.db
     volumes:
+      - ./api-data:/data
       - ./custom-songs:/data/custom-songs
     ports:
       - "4000:4000"
