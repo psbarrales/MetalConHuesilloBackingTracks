@@ -20,6 +20,7 @@ const TRACK_READY_TIMEOUT_MS = 15000
 const METRONOME_PROBE_TIMEOUT_MS = 2500
 const LAST_SONG_STORAGE_KEY = 'backingtrack:last-song-id'
 const MIN_AB_LOOP_LENGTH_S = 0.5
+const DEFAULT_COUNT_IN_BEATS = 4
 const TRACK_PAN_VALUES = {
   left: -1,
   stereo: 0,
@@ -621,14 +622,14 @@ export function useMultiTrackPlayer(songRepository) {
       await metronomeEngine.unlock()
     }
 
-    if (isFromStart && !useAudioMetronome) {
+    if (isFromStart) {
       // ── Cuenta regresiva ────────────────────────────────────────────────
       isCountingInRef.current = true
-      const { delayMs, beatTimingsMs } = metronomeEngine.countIn(bpm, 4)
+      const { delayMs, beatTimingsMs } = metronomeEngine.countIn(bpm, DEFAULT_COUNT_IN_BEATS)
 
       const timers = []
       beatTimingsMs.forEach((ms, i) => {
-        timers.push(setTimeout(() => setCountIn(4 - i), ms))
+        timers.push(setTimeout(() => setCountIn(DEFAULT_COUNT_IN_BEATS - i), ms))
       })
       timers.push(
         setTimeout(async () => {
@@ -639,7 +640,9 @@ export function useMultiTrackPlayer(songRepository) {
           for (const audio of Object.values(elements)) audio.currentTime = 0
           try {
             await Promise.all(Object.values(elements).map((a) => a.play()))
-            metronomeEngine.start(bpm, 0)
+            if (!useAudioMetronome) {
+              metronomeEngine.start(bpm, 0)
+            }
             startTimeTracking()
             setIsPlaying(true)
           } catch (err) {
