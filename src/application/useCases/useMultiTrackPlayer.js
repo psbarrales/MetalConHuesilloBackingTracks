@@ -20,6 +20,11 @@ const TRACK_READY_TIMEOUT_MS = 15000
 const METRONOME_PROBE_TIMEOUT_MS = 2500
 const LAST_SONG_STORAGE_KEY = 'backingtrack:last-song-id'
 const MIN_AB_LOOP_LENGTH_S = 0.5
+const TRACK_PAN_VALUES = {
+  left: -1,
+  stereo: 0,
+  right: 1,
+}
 
 function clampBpm(value) {
   if (!Number.isFinite(value)) return 120
@@ -116,10 +121,19 @@ function buildInitialMuteState() {
   return Object.fromEntries(TRACK_TYPES.map((t) => [t.id, t.defaultMuted]))
 }
 
+function buildInitialPanState() {
+  return Object.fromEntries(TRACK_TYPES.map((t) => [t.id, 'stereo']))
+}
+
 function applyTrackOutput(audio, isMuted, volume) {
   // `muted` es más confiable en iOS/Android que depender solo de `volume = 0`.
   audio.muted = Boolean(isMuted)
   audio.volume = isMuted ? 0 : volume
+}
+
+function applyTrackPan(panner, panMode) {
+  if (!panner) return
+  panner.pan.value = TRACK_PAN_VALUES[panMode] ?? TRACK_PAN_VALUES.stereo
 }
 
 function applyTrackPitchBehavior(audio, trackId, pitchSemitones) {
@@ -158,6 +172,7 @@ export function useMultiTrackPlayer(songRepository) {
   const [pitchSemitones, setPitchSemitones] = useState(0)
   const [volume, setVolume] = useState(0.9)
   const [muteState, setMuteState] = useState(buildInitialMuteState)
+  const [panState, setPanState] = useState(buildInitialPanState)
   const [loadedTracks, setLoadedTracks] = useState({})
   const [isPreparingPlayback, setIsPreparingPlayback] = useState(false)
   const [abLoopEnabled, setAbLoopEnabled] = useState(false)
@@ -166,6 +181,7 @@ export function useMultiTrackPlayer(songRepository) {
   const [countIn, setCountIn] = useState(null)
 
   const audioElementsRef = useRef({})
+  const audioGraphRef = useRef({ context: null, sources: {}, panners: {} })
   const masterIdRef = useRef(PREFERRED_MASTER)
   const animFrameRef = useRef(null)
   const isPlayingRef = useRef(false)
@@ -175,6 +191,7 @@ export function useMultiTrackPlayer(songRepository) {
   const useAudioMetronomeRef = useRef(false)
 
   const muteStateRef = useRef(muteState)
+  const panStateRef = useRef(panState)
   const volumeRef = useRef(volume)
   const currentSongRef = useRef(null)
   const playbackRateRef = useRef(1)
@@ -207,6 +224,10 @@ export function useMultiTrackPlayer(songRepository) {
   useEffect(() => {
     muteStateRef.current = muteState
   }, [muteState])
+
+  useEffect(() => {
+    panStateRef.current = panState
+  }, [panState])
 
   useEffect(() => {
     volumeRef.current = volume
@@ -285,6 +306,7 @@ export function useMultiTrackPlayer(songRepository) {
   // ─── Crea / recrea los elementos <audio> al cambiar de canción ─────────────
   useEffect(() => {
     let cancelled = false
+    const audioGraph = audioGraphRef.current
 
     const initSongAudios = async () => {
     if (!currentSong) return
@@ -303,6 +325,14 @@ export function useMultiTrackPlayer(songRepository) {
       audio.pause()
       audio.src = ''
     }
+    for (const panner of Object.values(audioGraph.panners)) {
+      panner.disconnect()
+    }
+    for (const source of Object.values(audioGraph.sources)) {
+      source.disconnect()
+    }
+    audioGraph.sources = {}
+    audioGraph.panners = {}
 
     setIsPlaying(false)
     setIsPreparingPlayback(false)
@@ -313,6 +343,7 @@ export function useMultiTrackPlayer(songRepository) {
     setAbLoopRange({ start: null, end: null })
     useAudioMetronomeRef.current = false
     metronomeEngine.setMuted(muteStateRef.current.metronomo ?? true)
+    metronomeEngine.setPan(TRACK_PAN_VALUES[panStateRef.current.metronomo] ?? TRACK_PAN_VALUES.stereo)
 
     const elements = {}
     const masterId = currentSong.tracks.includes(PREFERRED_MASTER)
@@ -334,11 +365,28 @@ export function useMultiTrackPlayer(songRepository) {
       if (trackId !== 'metronomo' && TRACK_TYPE_BY_ID[trackId]?.synthetic) continue
 
       const audio = new Audio()
+      audio.crossOrigin = 'anonymous'
       audio.preload = 'auto'
       applyTrackOutput(audio, muteStateRef.current[trackId] ?? true, volumeRef.current)
       applyTrackPitchBehavior(audio, trackId, effectivePitchSemitones)
       audio.playbackRate = playbackRateRef.current
       audio.src = buildTrackUrl(currentSong, trackId)
+
+      const AudioContextConstructor = window.AudioContext ?? window.webkitAudioContext
+      if (AudioContextConstructor) {
+        if (!audioGraph.context) {
+          audioGraph.context = new AudioContextConstructor()
+        }
+
+        if (audioGraph.context.createStereoPanner) {
+          const source = audioGraph.context.createMediaElementSource(audio)
+          const panner = audioGraph.context.createStereoPanner()
+          applyTrackPan(panner, panStateRef.current[trackId])
+          source.connect(panner).connect(audioGraph.context.destination)
+          audioGraph.sources[trackId] = source
+          audioGraph.panners[trackId] = panner
+        }
+      }
 
       audio.addEventListener(
         'loadedmetadata',
@@ -396,6 +444,14 @@ export function useMultiTrackPlayer(songRepository) {
         audio.pause()
         audio.src = ''
       }
+      for (const panner of Object.values(audioGraph.panners)) {
+        panner.disconnect()
+      }
+      for (const source of Object.values(audioGraph.sources)) {
+        source.disconnect()
+      }
+      audioGraph.sources = {}
+      audioGraph.panners = {}
       audioElementsRef.current = {}
     }
     // Solo se recrea cuando cambia la canción
@@ -409,6 +465,15 @@ export function useMultiTrackPlayer(songRepository) {
       applyTrackOutput(audio, isMuted, volume)
     }
   }, [muteState, volume])
+
+  // ─── Propaga cambios de paneo por pista ───────────────────────────────────
+  useEffect(() => {
+    for (const [trackId, panner] of Object.entries(audioGraphRef.current.panners)) {
+      applyTrackPan(panner, panState[trackId])
+    }
+
+    metronomeEngine.setPan(TRACK_PAN_VALUES[panState.metronomo] ?? TRACK_PAN_VALUES.stereo)
+  }, [panState])
 
   // ─── Propaga cambios de playbackRate ───────────────────────────────────────
   useEffect(() => {
@@ -536,6 +601,9 @@ export function useMultiTrackPlayer(songRepository) {
     setIsPreparingPlayback(true)
     try {
       await Promise.all(Object.values(elements).map((audio) => waitForTrackReady(audio)))
+      if (audioGraphRef.current.context?.state === 'suspended') {
+        await audioGraphRef.current.context.resume()
+      }
     } catch (err) {
       console.error('No se pudo preparar la reproducción:', err)
       setIsPreparingPlayback(false)
@@ -633,6 +701,10 @@ export function useMultiTrackPlayer(songRepository) {
     }
   }, [])
 
+  const setTrackPan = useCallback((trackId, panMode) => {
+    setPanState((prev) => ({ ...prev, [trackId]: panMode }))
+  }, [])
+
   const selectSong = useCallback((songId) => {
     setCurrentSongId(songId)
   }, [])
@@ -681,6 +753,7 @@ export function useMultiTrackPlayer(songRepository) {
     duration,
     volume,
     muteState,
+    panState,
     loadedTracks,
     abLoopEnabled,
     abLoopStart: abLoopRange.start,
@@ -693,6 +766,7 @@ export function useMultiTrackPlayer(songRepository) {
     setPitchSemitones: updatePitchSemitones,
     setVolume,
     toggleMute,
+    setTrackPan,
     toggleAbLoop,
     clearAbLoop,
     markAbLoopPoint,

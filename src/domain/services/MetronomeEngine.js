@@ -42,11 +42,13 @@ class MetronomeEngine {
   constructor() {
     this._ctx = null
     this._masterGain = null
+    this._panner = null
     this._interval = null
     this._nextBeatTime = 0
     this._beatCount = 0
     this._bpm = 120
     this._muted = true
+    this._pan = 0
   }
 
   _ensure({ resume = true } = {}) {
@@ -54,7 +56,14 @@ class MetronomeEngine {
       this._ctx = new (window.AudioContext || window.webkitAudioContext)()
       this._masterGain = this._ctx.createGain()
       this._masterGain.gain.value = this._muted ? 0 : 1
-      this._masterGain.connect(this._ctx.destination)
+      if (this._ctx.createStereoPanner) {
+        this._panner = this._ctx.createStereoPanner()
+        this._panner.pan.value = this._pan
+        this._masterGain.connect(this._panner).connect(this._ctx.destination)
+      } else {
+        this._panner = null
+        this._masterGain.connect(this._ctx.destination)
+      }
     }
     if (resume && this._ctx.state === 'suspended') {
       this._ctx.resume()
@@ -95,6 +104,14 @@ class MetronomeEngine {
     }
   }
 
+  /** Panea el metrónomo sintético: -1 izquierda, 0 centro, 1 derecha. */
+  setPan(pan) {
+    this._pan = Math.max(-1, Math.min(1, Number.isFinite(pan) ? pan : 0))
+    if (this._panner) {
+      this._panner.pan.value = this._pan
+    }
+  }
+
   /**
    * Programa N clicks de cuenta regresiva (siempre audibles, ignoran mute).
    * Devuelve:
@@ -109,7 +126,7 @@ class MetronomeEngine {
     // Gain independiente del master (count-in siempre suena)
     const ciGain = ctx.createGain()
     ciGain.gain.value = 1
-    ciGain.connect(ctx.destination)
+    ciGain.connect(this._panner ?? ctx.destination)
 
     for (let i = 0; i < beats; i++) {
       _makeClick(ctx, startTime + i * spb, i === 0, ciGain)

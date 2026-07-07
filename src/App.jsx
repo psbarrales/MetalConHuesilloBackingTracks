@@ -59,6 +59,7 @@ function App() {
     duration,
     volume,
     muteState,
+    panState,
     loadedTracks,
     abLoopEnabled,
     abLoopStart,
@@ -71,6 +72,7 @@ function App() {
     setPitchSemitones,
     setVolume,
     toggleMute,
+    setTrackPan,
     toggleAbLoop,
     clearAbLoop,
     markAbLoopPoint,
@@ -483,9 +485,11 @@ function App() {
 
         <TrackMixer
           muteState={muteState}
+          panState={panState}
           loadedTracks={loadedTracks}
           availableTracks={currentSong?.tracks ?? []}
           onToggleMute={toggleMute}
+          onSetPan={setTrackPan}
         />
 
         <Timeline
