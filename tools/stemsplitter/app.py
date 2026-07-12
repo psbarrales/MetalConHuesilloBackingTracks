@@ -24,6 +24,7 @@ CUSTOM_SONGS_ROOT = Path(os.environ.get("CUSTOM_SONGS_ROOT", APP_ROOT / "custom-
 APP_DB_PATH = Path(os.environ.get("APP_DB_PATH", CUSTOM_SONGS_ROOT.parent / "app.db"))
 ALLOWED_EXTENSIONS = {"mp3", "wav", "ogg", "flac"}
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 200 * 1024 * 1024))
 MODEL_NAME = os.environ.get("DEMUCS_MODEL", "htdemucs")
 OUTPUT_MP3_BITRATE = os.environ.get("DEMUCS_MP3_BITRATE", "320")
 DEFAULT_NEXT_CC = 21
@@ -42,7 +43,19 @@ CUSTOM_SONGS_ROOT.mkdir(parents=True, exist_ok=True)
 APP_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 CORS(app)
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.errorhandler(413)
+def upload_too_large(_error):
+    return jsonify(error="Uploaded file is too large"), 413
 
 
 @contextmanager
@@ -101,6 +114,60 @@ def allowed_file(filename: str) -> bool:
 
 def allowed_image_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+
+
+def detect_upload_type(uploaded_file) -> str | None:
+    head = uploaded_file.stream.read(512)
+    uploaded_file.stream.seek(0)
+
+    stripped_head = head.lstrip().lower()
+    blocked_prefixes = (b"<html", b"<!doctype html", b"<script", b"<?xml", b"javascript:")
+    if stripped_head.startswith(blocked_prefixes):
+        return None
+
+    if head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
+        return "mp3"
+    if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
+        return "wav"
+    if head.startswith(b"OggS"):
+        return "ogg"
+    if head.startswith(b"fLaC"):
+        return "flac"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "webp"
+
+    return None
+
+
+def validate_audio_upload(uploaded_file, label: str = "file") -> str:
+    filename = secure_filename(uploaded_file.filename or "")
+    if not filename or not allowed_file(filename):
+        raise ValueError(f"Invalid file format for {label}")
+
+    extension = Path(filename).suffix.lower().lstrip(".")
+    detected_type = detect_upload_type(uploaded_file)
+    if detected_type not in ALLOWED_EXTENSIONS or detected_type != extension:
+        raise ValueError(f"Invalid or unsafe audio content for {label}")
+
+    return filename
+
+
+def validate_image_upload(uploaded_file, label: str = "cover") -> str:
+    filename = secure_filename(uploaded_file.filename or "")
+    if not filename or not allowed_image_file(filename):
+        raise ValueError(f"Invalid file format for {label}")
+
+    extension = Path(filename).suffix.lower().lstrip(".")
+    detected_type = detect_upload_type(uploaded_file)
+    normalized_extension = "jpg" if extension == "jpeg" else extension
+    if detected_type not in ALLOWED_IMAGE_EXTENSIONS or detected_type != normalized_extension:
+        raise ValueError(f"Invalid or unsafe image content for {label}")
+
+    return filename
 
 
 def slugify(value: str) -> str:
@@ -259,8 +326,7 @@ def save_uploaded_track(file_key: str, song_dir: Path) -> str | None:
     if uploaded_file is None or uploaded_file.filename == "":
         return None
 
-    if not allowed_file(uploaded_file.filename):
-        raise ValueError(f"Invalid file format for {file_key}")
+    validate_audio_upload(uploaded_file, file_key)
 
     uploaded_file.save(song_dir / f"{file_key}.mp3")
     return file_key
@@ -271,8 +337,7 @@ def save_uploaded_cover(song_dir: Path) -> str | None:
     if cover_file is None or cover_file.filename == "":
         return None
 
-    if not allowed_image_file(cover_file.filename):
-        raise ValueError("Invalid cover file format")
+    validate_image_upload(cover_file)
 
     cover_file.save(song_dir / "portada.png")
     return "portada.png"
@@ -283,12 +348,7 @@ def save_uploaded_raw(song_dir: Path) -> Path | None:
     if raw_file is None or raw_file.filename == "":
         return None
 
-    if not allowed_file(raw_file.filename):
-        raise ValueError("Invalid raw file format")
-
-    filename = secure_filename(raw_file.filename)
-    if not filename:
-        raise ValueError("Invalid raw filename")
+    filename = validate_audio_upload(raw_file, "raw")
 
     suffix = Path(filename).suffix.lower()
     for existing_raw in song_dir.glob("raw.*"):
@@ -599,11 +659,13 @@ def read_audio_metadata():
     if audio_file.filename == "":
         return jsonify(error="No selected file"), 400
 
-    if not audio_file or not allowed_file(audio_file.filename):
-        return jsonify(error="Invalid file format"), 400
+    try:
+        filename = validate_audio_upload(audio_file)
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
 
     temp_dir = Path(tempfile.mkdtemp(dir=UPLOAD_ROOT))
-    source_path = temp_dir / Path(audio_file.filename).name
+    source_path = temp_dir / filename
     audio_file.save(source_path)
 
     try:
@@ -622,11 +684,12 @@ def separate_audio_file():
     if audio_file.filename == "":
         return jsonify(error="No selected file"), 400
 
-    if not audio_file or not allowed_file(audio_file.filename):
-        return jsonify(error="Invalid file format"), 400
+    try:
+        filename = validate_audio_upload(audio_file)
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
 
     job_id = next(tempfile._get_candidate_names())
-    filename = Path(audio_file.filename).name
     input_dir = UPLOAD_ROOT / job_id
     output_dir = OUTPUT_ROOT / job_id
     input_dir.mkdir(parents=True, exist_ok=True)
@@ -675,12 +738,10 @@ def create_custom_song():
     if audio_file.filename == "":
         return jsonify(error="No selected file"), 400
 
-    if not audio_file or not allowed_file(audio_file.filename):
-        return jsonify(error="Invalid file format"), 400
-
-    filename = secure_filename(audio_file.filename)
-    if not filename:
-        return jsonify(error="Invalid filename"), 400
+    try:
+        filename = validate_audio_upload(audio_file)
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
 
     source_stem = Path(filename).stem
     requested_title = request.form.get("title", "").strip()

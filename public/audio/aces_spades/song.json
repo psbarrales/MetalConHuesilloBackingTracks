@@ -3,6 +3,6 @@
   "slug": "aces_spades",
   "title": "Ace of Spades",
   "artist": "Motorhead",
-  "tempo": 144,
+  "tempo": 138,
   "tracks": ["voz", "guitarra", "bajo", "bateria"]
 }
