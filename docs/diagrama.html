@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mapa del proyecto — Metal Con Huesillo Backing Tracks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<style>
+  :root{
+    --bg:#020617; --panel:#0f172a; --panel2:#111c33; --border:#1e293b;
+    --fg:#e2e8f0; --muted:#94a3b8; --dim:#64748b;
+    --cyan:#22d3ee; --emerald:#34d399; --violet:#a78bfa; --amber:#fbbf24;
+    --rose:#fb7185; --slate:#94a3b8; --legacy:#64748b;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:'JetBrains Mono', ui-monospace, monospace;
+    font-size:13px; overflow:hidden;
+  }
+  /* ── Header ─────────────────────────────── */
+  header{
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    padding:10px 18px; border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg,#0b1120,#020617);
+  }
+  header h1{font-size:15px; font-weight:700; letter-spacing:.4px; white-space:nowrap;}
+  header h1 .dot{color:var(--emerald); animation:pulse 1.6s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  header .tagline{color:var(--dim); font-size:10.5px; line-height:1.5;}
+  .spacer{flex:1;}
+  #search{
+    background:var(--panel); border:1px solid var(--border); color:var(--fg);
+    border-radius:6px; padding:6px 10px; font-family:inherit; font-size:12px; width:250px;
+    outline:none; transition:border-color .15s;
+  }
+  #search:focus{border-color:var(--cyan);}
+  #search::placeholder{color:var(--dim);}
+  .btn{
+    background:var(--panel); border:1px solid var(--border); color:var(--muted);
+    border-radius:6px; padding:5px 10px; font-family:inherit; font-size:12px; cursor:pointer;
+    transition:all .15s;
+  }
+  .btn:hover{border-color:var(--cyan); color:var(--fg);}
+  .hint{color:var(--dim); font-size:10.5px; white-space:nowrap;}
+  /* ── Layout ─────────────────────────────── */
+  .layout{display:flex; height:calc(100vh - 53px);}
+  main{flex:1; position:relative; min-width:0;}
+  #diagram{position:absolute; inset:0;}
+  #diagram svg{width:100%; height:100%; display:block; cursor:grab;}
+  #diagram svg:active{cursor:grabbing;}
+  /* ── Panel de detalle ───────────────────── */
+  aside{
+    width:380px; flex-shrink:0; border-left:1px solid var(--border);
+    background:var(--panel); overflow-y:auto; padding:18px;
+  }
+  aside h2{font-size:14px; margin:8px 0 2px; line-height:1.35;}
+  .detail-sub{color:var(--muted); font-size:10.5px; margin-bottom:6px;}
+  .badge{
+    display:inline-block; font-size:9px; font-weight:700; letter-spacing:1.2px;
+    padding:2px 8px; border-radius:3px; border:1px solid; text-transform:uppercase;
+  }
+  .badge.frontend{color:var(--cyan); border-color:var(--cyan);}
+  .badge.backend{color:var(--emerald); border-color:var(--emerald);}
+  .badge.db{color:var(--violet); border-color:var(--violet);}
+  .badge.cloud{color:var(--amber); border-color:var(--amber);}
+  .badge.external{color:var(--slate); border-color:var(--slate);}
+  .badge.security{color:var(--rose); border-color:var(--rose);}
+  .badge.legacy{color:var(--legacy); border-color:var(--legacy);}
+  .detail-sec{margin-top:14px;}
+  .detail-sec h4{
+    font-size:10px; letter-spacing:1.4px; color:var(--dim); text-transform:uppercase;
+    margin-bottom:6px; border-bottom:1px solid var(--border); padding-bottom:4px;
+  }
+  .detail-sec p{color:var(--muted); font-size:11.5px; line-height:1.65;}
+  .detail-sec ul{list-style:none; margin-top:4px;}
+  .detail-sec li{
+    color:var(--muted); font-size:11.5px; line-height:1.6; padding-left:14px; position:relative;
+  }
+  .detail-sec li::before{content:'▸'; position:absolute; left:0; color:var(--dim);}
+  .detail-sec code{
+    background:var(--panel2); border:1px solid var(--border); color:#a5f3fc;
+    border-radius:4px; padding:1px 5px; font-size:10.5px; word-break:break-all;
+  }
+  .intro h2{color:var(--fg);}
+  .intro .kbd{
+    display:inline-block; background:var(--panel2); border:1px solid var(--border);
+    border-bottom-width:2px; border-radius:4px; padding:1px 6px; font-size:10px; color:var(--muted);
+  }
+  .intro ol{list-style:none; margin-top:8px;}
+  .intro li{
+    color:var(--muted); font-size:11.5px; line-height:1.7; padding-left:16px; position:relative; margin-top:4px;
+  }
+  .intro li::before{content:'→'; position:absolute; left:0; color:var(--cyan);}
+  .stats{display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;}
+  .stat{
+    background:var(--panel2); border:1px solid var(--border); border-radius:6px;
+    padding:6px 10px; text-align:center;
+  }
+  .stat b{display:block; font-size:14px; color:var(--cyan);}
+  .stat span{font-size:9px; color:var(--dim); letter-spacing:.8px; text-transform:uppercase;}
+  .detail-close{display:none;}
+  /* ── Tooltip ────────────────────────────── */
+  #tooltip{
+    position:fixed; z-index:50; pointer-events:none; display:none;
+    background:rgba(2,6,23,.95); border:1px solid var(--border); border-radius:6px;
+    padding:8px 10px; max-width:320px; box-shadow:0 8px 24px rgba(0,0,0,.5);
+  }
+  #tooltip .t-label{font-size:11.5px; font-weight:700; color:var(--fg);}
+  #tooltip .t-sub{font-size:10px; color:var(--dim); margin-top:2px;}
+  /* ── Elementos SVG ──────────────────────── */
+  .node{cursor:pointer;}
+  .node rect.box{fill-opacity:1;}
+  .node:hover rect.box{stroke-width:2.5; filter:drop-shadow(0 0 8px rgba(34,211,238,.35));}
+  .node.dim{opacity:.1; pointer-events:none;}
+  .node.hit rect.box{stroke-width:2.5; stroke:var(--amber) !important; filter:drop-shadow(0 0 10px rgba(251,191,36,.6));}
+  .node text.label{fill:var(--fg); font-size:12px; font-weight:700;}
+  .node text.sub{fill:var(--muted); font-size:9px;}
+  .node text.kind{fill:var(--dim); font-size:7.5px; letter-spacing:1.6px;}
+  .node.legacy text.label{fill:var(--dim); text-decoration:line-through;}
+  .boundary rect{fill:rgba(15,23,42,.35);}
+  .boundary text.b-label{fill:var(--fg); font-size:11px; font-weight:700; letter-spacing:1.5px;}
+  .boundary text.b-sub{fill:var(--dim); font-size:8.5px;}
+  .boundary .collapse{cursor:pointer; fill:var(--dim); font-size:10px;}
+  .boundary.collapsed .b-content{display:none;}
+  .edge path{fill:none; stroke-width:1.4; opacity:.8;}
+  .edge path.main{stroke:var(--slate);}
+  .edge path.security{stroke:var(--rose); stroke-dasharray:5 4;}
+  .edge text{fill:var(--muted); font-size:8.5px; paint-order:stroke; stroke:var(--bg); stroke-width:4px;}
+  .hidden{display:none;}
+  .layer-label{fill:var(--dim); font-size:9px;}
+  .legend{fill:var(--muted); font-size:9.5px;}
+  @media (max-width:1100px){
+    aside{width:300px;}
+    header .hint{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="dot">●</span> Mapa del proyecto · Backing Tracks Metal Con Huesillo</h1>
+  <div class="tagline">React 19 + Vite · API Flask + Demucs · Docker · Railway<br/>Click en cada caja para ver detalle · scroll = zoom · arrastra = navegar</div>
+  <div class="spacer"></div>
+  <input id="search" type="text" placeholder="Buscar archivo, componente, canción…" autocomplete="off" />
+  <button class="btn" id="zoom-in" title="Acercar">＋</button>
+  <button class="btn" id="zoom-out" title="Alejar">－</button>
+  <button class="btn" id="zoom-fit" title="Ajustar al mapa">⤢</button>
+  <button class="btn" id="reset" title="Limpiar selección y búsqueda">✕</button>
+</header>
+
+<div class="layout">
+  <main>
+    <div id="diagram"><svg viewBox="0 0 1560 1960" preserveAspectRatio="xMidYMid meet"></svg></div>
+  </main>
+  <aside id="details">
+    <div class="intro">
+      <span class="badge external">INTERACTIVO</span>
+      <h2>Explora el proyecto completo</h2>
+      <p class="detail-sub">Mapa de arquitectura y código: cada caja es un componente real del repo.</p>
+      <ol>
+        <li><span class="kbd">Click</span> en cualquier caja → panel con archivos, qué hace y puntos clave</li>
+        <li><span class="kbd">Rueda</span> zoom · <span class="kbd">Arrastrar</span> para mover el mapa</li>
+        <li>Usa la <b>búsqueda</b> para ubicar archivos (ej: <code>app.py</code>, <code>song.json</code>, <code>Metronome</code>)</li>
+        <li><span class="kbd">Click</span> en el título de una zona (EJ: <code>FRONTEND SPA</code>) para colapsarla/expandirla</li>
+        <li>Las cajas <s>tachadas</s> son código <b>legacy sin uso</b></li>
+      </ol>
+      <div class="stats">
+        <div class="stat"><b>32</b><span>cajas</span></div>
+        <div class="stat"><b>29</b><span>archivos</span></div>
+        <div class="stat"><b>6</b><span>zonas</span></div>
+        <div class="stat"><b>6</b><span>canciones</span></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+/* ═══════════════════ Datos del diagrama ═══════════════════
+   Cada nodo = componente/archivo real del repo (verificado en docs/) */
+const T = {
+  frontend:'#22d3ee', backend:'#34d399', db:'#a78bfa', cloud:'#fbbf24',
+  external:'#94a3b8', security:'#fb7185', legacy:'#64748b'
+};
+const FILL = {
+  frontend:'rgba(8,51,68,0.45)', backend:'rgba(6,78,59,0.45)', db:'rgba(76,29,149,0.4)',
+  cloud:'rgba(120,53,15,0.35)', external:'rgba(30,41,59,0.55)', security:'rgba(136,19,55,0.4)',
+  legacy:'rgba(51,65,85,0.3)'
+};
+const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const ZONE_NAMES = {entrada:'Entrada (dispositivos)', frontend:'Frontend SPA', servicios:'Servicios HTTP', datos:'Datos y herramientas', deploy:'Despliegue'};
+
+const nodes = [];
+const N = (id,label,sub,type,x,y,w,h,opts={}) => {
+  nodes.push(Object.assign({id,label,sub,type,x,y,w,h,layer:opts.layer||'misc'},opts));
+};
+const L = (id,label,sub,x,y,w,h,type,layer) => nodes.push({id,label,sub,type,x,y,w,h,layer,boundary:true});
+
+/* ── Zona ENTRADA ─────────────────────────────────────── */
+N('midi','Controlador MIDI','pedal / board Bluetooth · CC Next 21 · CC Prev 22','external',820,80,700,66,{
+  layer:'entrada',
+  desc:'Pedal o controlador Bluetooth que manda mensajes Control Change (0xB0). El CC configurado para Next (default 21) o Prev (default 22) salta al checkpoint siguiente/anterior del grupo activo, sin tocar la computadora.',
+  bullets:['Se configura por canción en el CheckpointPanel','Solo navegadores con Web MIDI lo reciben (Chrome/Edge; Safari no)']
+});
+N('navegador','Navegador','SPA + Web Audio + Web MIDI · desktop / móvil','external',40,80,700,66,{
+  layer:'entrada',
+  desc:'Ejecuta la SPA. Usa Web Audio (AudioContext + StereoPanner) para mezclar los stems y el metrónomo, y navigator.requestMIDIAccess() para recibir el CC del controlador.',
+  bullets:['Autoplay policy: el AudioContext se desbloquea en el gesto de play','La última canción elegida persiste en localStorage (backingtrack:last-song-id)']
+});
+
+/* ── Zona FRONTEND ────────────────────────────────────── */
+N('app','App.jsx','raíz de la UI · orquesta todo','frontend',40,280,540,84,{
+  layer:'frontend',
+  archivos:['src/App.jsx (876 líneas)'],
+  desc:'Componente raíz. Conecta el hook useMultiTrackPlayer con todos los componentes: portadas (fallback de URL), letras SRT, y los modales de canciones custom (separar master, cargar stems, editar, eliminar) con polling de estado cada 3,5 s.',
+  bullets:['coverState: intenta /audio/{slug}/portada.png y fallbacks','activeLyricIndex: busca la línea SRT activa por currentTime','customSongStatus: idle / uploading / processing / success / error'],
+  conn:'→ useMultiTrackPlayer (hook) · → CheckpointPanel (handlers) · → inMemorySongRepository (CRUD custom)'
+});
+N('SongSelector','SongSelector','selector de canción','frontend',40,415,250,62,{
+  layer:'frontend', archivos:['src/ui/components/SongSelector.jsx'],
+  desc:'Listado de canciones (estáticas + custom) ordenadas por título; al elegir una dispara selectSong().'
+});
+N('TrackMixer','TrackMixer','mezcla por pista','frontend',310,415,250,62,{
+  layer:'frontend', archivos:['src/ui/components/TrackMixer.jsx'],
+  desc:'Por pista: mute + paneo (izquierda / stereo / derecha) + indicador de pista cargada (loadedTracks).'
+});
+N('Timeline','Timeline','línea de tiempo + loop','frontend',40,495,250,62,{
+  layer:'frontend', archivos:['src/ui/components/Timeline.jsx'],
+  desc:'Barra de progreso con seek, loop A-B (marcar punto, activar, limpiar) y checkpoints visibles sobre la línea.'
+});
+N('TransportControls','TransportControls','play · ±10 s','frontend',310,495,250,62,{
+  layer:'frontend', archivos:['src/ui/components/TransportControls.jsx'],
+  desc:'Play/pause, retroceder/avanzar 10 s, indicador de preparación y de count-in (4·3·2·1).'
+});
+N('CheckpointPanel','CheckpointPanel','checkpoints + Web MIDI','frontend',40,575,250,62,{
+  layer:'frontend', archivos:['src/ui/components/CheckpointPanel.jsx'],
+  desc:'CRUD de grupos y checkpoints (label + tiempo), configuración de CC MIDI (Next/Prev por canción) y activación de Web MIDI: escucha Control Change y dispara next/prev checkpoint.',
+  bullets:['midiControls default: nextCc 21, prevCc 22','Handlers frescos en latestHandlersRef (evita closures viejos)'],
+  conn:'→ API (persistencia SQLite) · → useMultiTrackPlayer (navegación)'
+});
+N('LyricsPanel','LyricsPanel','letra sincronizada','frontend',310,575,250,62,{
+  layer:'frontend', archivos:['src/ui/components/LyricsPanel.jsx'],
+  desc:'Muestra la letra actual y la siguiente, sincronizadas con currentTime.'
+});
+N('srt','srt.js','parser SRT','frontend',40,655,250,52,{
+  layer:'frontend', archivos:['src/ui/formatters/srt.js'],
+  desc:'parseSrt() → [{start, end, text}] en segundos. Aguanta comas o puntos en los tiempos y CRLF; bloques inválidos se descartan.'
+});
+N('time','time.js','formato mm:ss','frontend',310,655,250,52,{
+  layer:'frontend', archivos:['src/ui/formatters/time.js'],
+  desc:'formatSeconds() → mm:ss (fallback 00:00).'
+});
+N('useMultiTrackPlayer','useMultiTrackPlayer','EL CORAZÓN · ~1.080 líneas','frontend',620,320,860,112,{
+  layer:'frontend',
+  archivos:['src/application/useCases/useMultiTrackPlayer.js'],
+  desc:'Hook que implementa todo el reproductor: crea un <audio> por pista (voz, guitarra, bajo, batería y metronomo.mp3 si existe), los conecta a un AudioContext con StereoPanner por pista y mantiene la sincronía maestro/esclavo.',
+  bullets:['Maestro = "voz" (PREFERRED_MASTER); esclavos se corrigen por deriva (0,12 s suave / 0,2 s cada 1 s)','playbackRate = (BPM objetivo / BPM base) × 2^(semitonos/12)','Count-in de 4 tiempos siempre audible; el audio arranca con delayMs exacto','Loop A-B verificado en cada frame (requestAnimationFrame)','Refs espejo (*Ref) para leer estado dentro de timers/rAF'],
+  conn:'→ MetronomeEngine (sintético) · → inMemorySongRepository (songs, checkpoints)'
+});
+N('useBackingTrackPlayer','useBackingTrackPlayer','legacy · reproductor de "modos"','legacy',620,448,860,44,{
+  layer:'frontend', archivos:['src/application/useCases/useBackingTrackPlayer.js'],
+  desc:'REPRODUCTOR LEGACY SIN USO: un solo <audio> que cambia de archivo según el "modo" (guitarra/bajo/bateria/cuerdas/acapella). App.jsx no lo importa; fue el primer reproductor.',
+  bullets:['Reemplazado por useMultiTrackPlayer','Candidato a eliminación']
+});
+N('MetronomeEngine','MetronomeEngine','metrónomo sintético Web Audio','frontend',620,556,860,58,{
+  layer:'frontend', archivos:['src/domain/services/MetronomeEngine.js'],
+  desc:'Genera clicks de baqueta (ruido + decaimiento exponencial + highpass) con scheduler look-ahead de 25 ms y acento en el tiempo 1 de 4/4. Singleton exportado: metronomeEngine.',
+  bullets:['countIn(): 4 clicks siempre audibles (gain independiente del mute) + delayMs exacto','start(bpm, posición): sincroniza el click con el tiempo de la canción','setMuted() / setPan() en tiempo real'],
+  conn:'Usado por useMultiTrackPlayer (solo si no hay metronomo.mp3)'
+});
+N('Song','Song.js','entidad canción','frontend',620,628,270,52,{
+  layer:'frontend', archivos:['src/domain/entities/Song.js'],
+  desc:'createSong() normaliza una canción del catálogo: tracks por defecto [voz, guitarra, bajo, bateria], baseUrl = /audio/{slug} y flag custom.',
+  bullets:['Garantiza que "metronomo" esté siempre en tracks']
+});
+N('trackTypes','trackTypes.js','tipos de pista','frontend',915,628,270,52,{
+  layer:'frontend', archivos:['src/domain/constants/trackTypes.js'],
+  desc:'TRACK_TYPES: voz (única activa por defecto), guitarra/bajo/bateria (muteadas), metronomo (defaultMuted + synthetic → no requiere .mp3, lo genera el motor).'
+});
+N('legacy-domain','trackModes + TrackSelectionService','legacy sin uso','legacy',1210,628,270,52,{
+  layer:'frontend', archivos:['src/domain/constants/trackModes.js','src/domain/services/TrackSelectionService.js'],
+  desc:'LEGACY: los "modos" del reproductor viejo (guitarra/bajo/bateria/cuerdas/acapella). Sin uso actual.'
+});
+N('repository','inMemorySongRepository','acceso a datos del frontend','frontend',620,780,860,110,{
+  layer:'frontend', archivos:['src/infrastructure/repositories/inMemorySongRepository.js'],
+  desc:'Catálogo estático con import.meta.glob de public/audio/*/song.json (embebido en el bundle en build time) + canciones custom vía API + CRUD de checkpoints/MIDI.',
+  bullets:['URL API: window.__APP_CONFIG__ → import.meta.env.VITE_STEM_SPLITTER_URL → http://localhost:4000','fetchCustomSongs(): solo status "ready"; silencioso si la API no responde','requestJson() centraliza fetch y errores'],
+  conn:'→ nginx (/audio/{slug}/*.mp3) · → API Flask (custom + checkpoints)'
+});
+
+/* ── Zona SERVICIOS ───────────────────────────────────── */
+N('nginx','nginx — estáticas + SPA',':80 / ${PORT}','backend',40,1060,520,120,{
+  layer:'servicios', archivos:['Dockerfile (raíz)','nginx/default.conf','nginx/30-runtime-config.sh'],
+  desc:'Sirve el build estático (dist/) con fallback SPA (try_files → index.html) y caché de 1 h para /audio/. El entrypoint escribe /usr/share/nginx/html/config.js con VITE_STEM_SPLITTER_URL: config de la API en runtime, sin rebuild.',
+  bullets:['Template nginx: listen ${PORT} (default 80)','El CORS lo maneja la API (Flask-CORS), no nginx'],
+  conn:'→ public/audio (estáticas) · ← navegador (GET /)'
+});
+N('app.py','API Flask :4000','tools/stemsplitter/app.py · ~925 líneas','backend',640,1040,860,96,{
+  layer:'servicios', archivos:['tools/stemsplitter/app.py','tools/stemsplitter/requirements.txt'],
+  desc:'API única con dos dominios: (1) separación de stems y CRUD de canciones custom; (2) checkpoints y controles MIDI con persistencia SQLite. CORS abierto, nosniff, MAX_CONTENT_LENGTH 200 MB.',
+  bullets:['/songs/custom: POST (separa en background con thread daemon), /manual, PATCH, DELETE, /status','/separate (zip síncrono) · /metadata (tags ID3) · /health','/songs/{slug}/checkpoints y /midi-controls · /checkpoint-groups · /checkpoints','Estados: processing → ready | error (en song.json)'],
+  conn:'→ Demucs (subprocess) · → SQLite (checkpoints) · → custom-songs/ (fs)'
+});
+N('demucs','Demucs (htdemucs)','separación de stems · 320 kbps','backend',640,1160,270,92,{
+  layer:'servicios', archivos:['demucs==4.0.1 (requirements.txt)'],
+  desc:'Separa el master con el modelo htdemucs. Mapeo: vocals→voz, bass→bajo, drums→bateria, other→guitarra.',
+  bullets:['NOTA: "other" ≠ guitarra pura; es el instrumental restante','Corre como subprocess en thread daemon para canciones custom','Requiere ffmpeg en la imagen'],
+  conn:'→ custom-songs/ (escribe stems)'
+});
+N('validacion','Validación de uploads','magic bytes + extensión','security',930,1160,270,92,{
+  layer:'servicios', archivos:['tools/stemsplitter/app.py → detect_upload_type()'],
+  desc:'Seguridad: lee los primeros 512 bytes del archivo (firma real) y exige que coincidan con la extensión. Bloquea HTML/JS camuflados.',
+  bullets:['Firmas: ID3 / 0xFFE0 (mp3) · RIFF/WAVE · OggS · fLaC · PNG/JPEG/WEBP','secure_filename + header nosniff','Coherente con el commit feat(security) del 2026-07-12']
+});
+N('metadata','Metadata (mutagen)','tags ID3 del master','backend',1220,1160,280,92,{
+  layer:'servicios', archivos:['tools/stemsplitter/app.py → extract_metadata()'],
+  desc:'Lee tags del mp3 (easy tags): title, artist, bpm/tbpm. Precedencia: valor del form > metadata > slug humanizado.'
+});
+N('sqlite','SQLite app.db','persistencia local','db',640,1280,400,110,{
+  layer:'servicios', archivos:['api-data/app.db (local, gitignored)','/data/app.db (Docker)'],
+  desc:'Guarda checkpoints y controles MIDI por canción. Tablas: song_midi_controls (next_cc, prev_cc), checkpoint_groups, checkpoints (FK ON DELETE CASCADE).',
+  bullets:['PRAGMA foreign_keys = ON','Índices por (song_slug, sort_order) y (group_id, sort_order, time)']
+});
+N('custom-songs','custom-songs/','canciones subidas por la UI','db',1060,1280,440,110,{
+  layer:'servicios', archivos:['custom-songs/{slug}/ (gitignored)'],
+  desc:'Canciones custom: cada carpeta tiene raw.{ext}, stems .mp3, song.json y portada.png. Se sirven por GET /songs/custom/{slug}/{archivo}.',
+  bullets:['No versionadas en git; persisten en volumen Docker ./custom-songs:/data/custom-songs','status vive en song.json: processing | ready | error']
+});
+
+/* ── Zona DATOS Y HERRAMIENTAS ────────────────────────── */
+N('public-audio','public/audio/ — catálogo estático','6 canciones con stems','cloud',40,1520,700,104,{
+  layer:'datos', archivos:['public/audio/{slug}/ (versionado en git)'],
+  desc:'Catálogo base: cada carpeta tiene voz/guitarra/bajo/bateria.mp3 + song.json, y opcionalmente metronomo.mp3, lyrics.srt y portada.png.',
+  bullets:['aces_spades · breaking_the_law · crazy_train · holy_diver · paranoid · we_arent_gonna_take_it','Se indexa en build time con import.meta.glob','Si falta metronomo.mp3, el reproductor usa el sintético']
+});
+N('separate.sh','separate.sh','pipeline local de stems','cloud',780,1520,320,104,{
+  layer:'datos', archivos:['separate.sh'],
+  desc:'Pipeline para canciones estáticas: levanta la API, lee metadata del raw.mp3, sube a POST /separate, descarga el zip, mapea stems y genera song.json.',
+  bullets:['Uso: ./separate.sh {slug} (con raw.mp3 en la carpeta)','Requiere curl, unzip, docker, python3','Limpia temporales con trap EXIT'],
+  conn:'→ API Flask (POST /separate · /metadata) · → public/audio (escribe stems)'
+});
+N('railway','Railway','producción · deploy','cloud',1140,1520,380,104,{
+  layer:'datos',
+  desc:'Plataforma de deploy (evidencia indirecta: commits "trigger-build" en el historial). La web sirve en el puerto de PORT; la URL de la API se inyecta en runtime a config.js.',
+  bullets:['VITE_STEM_SPLITTER_URL como variable de runtime (no build-time)','La API necesita volumen persistente para /data (SQLite + custom-songs)'],
+  conn:'→ Dockerfile web (deploy) · → api/Dockerfile (deploy)'
+});
+
+/* ── Zona DESPLIEGUE ──────────────────────────────────── */
+N('compose','docker-compose.yml','orquestación local','cloud',40,1730,340,100,{
+  layer:'deploy', archivos:['docker-compose.yml'],
+  desc:'Levanta web :8080→80 y stemsplitter :4000 con volúmenes ./api-data:/data y ./custom-songs:/data/custom-songs (persistencia).',
+  conn:'→ Dockerfile web (build) · → api/Dockerfile (build)'
+});
+N('dockerfile-web','Dockerfile web','node build → nginx','cloud',410,1730,320,100,{
+  layer:'deploy', archivos:['Dockerfile'],
+  desc:'Multi-stage: node:20-alpine (npm ci + npm run build → dist/) → nginx:1.27-alpine con template ${PORT} y entrypoint que escribe config.js.',
+  conn:'→ nginx (imagen · dist/)'
+});
+N('dockerfile-api','api/Dockerfile','API Python + Demucs','cloud',760,1730,320,100,{
+  layer:'deploy', archivos:['api/Dockerfile','tools/stemsplitter/Dockerfile (alternativo, no usado por compose)'],
+  desc:'python:3.11-slim + ffmpeg + requirements (demucs, flask, flask-cors, mutagen). Expone :4000.',
+  conn:'→ API Flask (imagen)'
+});
+N('config-js','config.js runtime','URL de la API inyectada','cloud',1110,1730,410,100,{
+  layer:'deploy', archivos:['index.html (carga /config.js)','public/config.js (stub de dev)','nginx/30-runtime-config.sh (escribe en Docker)'],
+  desc:'window.__APP_CONFIG__.VITE_STEM_SPLITTER_URL: en dev se edita public/config.js; en Docker/ Railway lo escribe el entrypoint de nginx al arrancar (config en runtime, sin rebuild).'
+});
+
+/* ── Zonas (boundaries colapsables) ───────────────────── */
+const layers = [
+  {id:'entrada',  label:'ENTRADA — dispositivo',        x:20,  y:30,  w:1520, h:150, color:T.external},
+  {id:'frontend', label:'FRONTEND SPA · React 19 + Vite 5 (src/)', x:20, y:210, w:1520, h:750, color:T.frontend},
+  {id:'servicios',label:'SERVICIOS HTTP · Docker (web :80 · API :4000)', x:20, y:990, w:1520, h:460, color:T.backend},
+  {id:'datos',    label:'DATOS Y HERRAMIENTAS',         x:20,  y:1480, w:1520, h:180, color:T.cloud},
+  {id:'deploy',   label:'DESPLIEGUE · Docker + Railway',x:20,  y:1700, w:1520, h:200, color:T.cloud},
+];
+/* Sub-boundaries (no colapsables) */
+const groups = [
+  {id:'g-ui',  label:'src/ui — componentes React',   sub:'', x:28,  y:385, w:564, h:345, color:T.frontend, layer:'frontend'},
+  {id:'g-app', label:'src/application — useCases',   sub:'', x:600, y:280, w:900, h:230, color:T.frontend, layer:'frontend'},
+  {id:'g-dom', label:'src/domain — entidades y servicios', sub:'', x:600, y:520, w:900, h:210, color:T.frontend, layer:'frontend'},
+  {id:'g-inf', label:'src/infrastructure — repositorios', sub:'', x:600, y:740, w:900, h:190, color:T.frontend, layer:'frontend'},
+  {id:'g-api', label:'API Flask :4000 — tools/stemsplitter/', sub:'Flask + CORS + SQLite', x:620, y:1000, w:900, h:430, color:T.backend, layer:'servicios'},
+];
+
+/* ── Conexiones ───────────────────────────────────────── */
+const edges = [
+  {from:'midi', to:'navegador', d:'M 820 113 L 742 113', cls:'security', label:'Bluetooth · Web MIDI (CC)', lx:780, ly:104},
+  {from:'navegador', to:'nginx', d:'M 390 146 C 390 550, 300 750, 300 1060', cls:'main', label:'GET / · /audio/*', lx:318, ly:620},
+  {from:'navegador', to:'app.py', d:'M 700 146 C 700 650, 1070 850, 1070 1040', cls:'main', label:'fetch · custom + checkpoints', lx:872, ly:600},
+  {from:'repository', to:'nginx', d:'M 1050 890 C 800 950, 500 1000, 300 1060', cls:'main', label:'GET /audio/{slug}/*.mp3', lx:590, ly:1010},
+  {from:'repository', to:'app.py', d:'M 1280 890 C 1300 950, 1150 990, 1150 1040', cls:'main', label:'fetch API', lx:1222, ly:960},
+  {from:'app.py', to:'demucs', d:'M 700 1136 C 700 1150, 730 1160, 775 1160', cls:'main', label:'subprocess', lx:700, ly:1146},
+  {from:'app.py', to:'sqlite', d:'M 700 1136 C 700 1220, 790 1240, 840 1280', cls:'main', label:'SQL', lx:720, ly:1215},
+  {from:'app.py', to:'custom-songs', d:'M 1480 1136 C 1480 1220, 1280 1240, 1280 1280', cls:'main', label:'fs: stems + song.json', lx:1395, ly:1215},
+  {from:'demucs', to:'custom-songs', d:'M 775 1252 C 900 1270, 1100 1270, 1180 1280', cls:'main', label:'escribe stems', lx:980, ly:1265},
+  {from:'separate.sh', to:'app.py', d:'M 920 1520 C 920 1400, 900 1300, 1000 1136', cls:'main', label:'POST /separate · /metadata', lx:960, ly:1320},
+  {from:'separate.sh', to:'public-audio', d:'M 780 1572 L 742 1572', cls:'main', label:'escribe stems + song.json', lx:700, ly:1562},
+  {from:'nginx', to:'public-audio', d:'M 300 1180 C 300 1300, 300 1400, 300 1520', cls:'main', label:'sirve /audio/', lx:312, ly:1350},
+  {from:'dockerfile-web', to:'nginx', d:'M 570 1730 C 570 1500, 300 1400, 300 1180', cls:'main', label:'imagen · dist/', lx:378, ly:1460},
+  {from:'compose', to:'dockerfile-web', d:'M 380 1780 L 408 1780', cls:'main', label:'build', lx:362, ly:1771},
+  {from:'compose', to:'dockerfile-api', d:'M 380 1780 C 500 1780, 600 1780, 758 1780', cls:'main', label:'build', lx:560, ly:1771},
+  {from:'railway', to:'dockerfile-web', d:'M 1140 1572 C 900 1572, 700 1700, 570 1780', cls:'main', label:'deploy', lx:830, ly:1680},
+  {from:'railway', to:'dockerfile-api', d:'M 1320 1624 C 1320 1700, 1100 1780, 920 1780', cls:'main', label:'deploy', lx:1120, ly:1730},
+  {from:'app', to:'useMultiTrackPlayer', d:'M 580 322 L 618 322', cls:'main', label:'usa el hook', lx:552, ly:313},
+  {from:'useMultiTrackPlayer', to:'MetronomeEngine', d:'M 1050 432 L 1050 554', cls:'main', label:'singleton', lx:1060, ly:490},
+  {from:'useMultiTrackPlayer', to:'repository', d:'M 1050 432 L 1050 778', cls:'main', label:'songs · checkpoints', lx:1062, ly:600},
+  {from:'app', to:'CheckpointPanel', d:'M 580 350 C 480 380, 300 380, 300 415', cls:'main', label:'handlers', lx:430, ly:392},
+];
+
+/* ═══════════════════ Render ═══════════════════ */
+const svg = d3.select('#diagram svg');
+const W = 1560, H = 1960;
+
+const defs = svg.append('defs');
+defs.append('pattern').attr('id','grid').attr('width',40).attr('height',40).attr('patternUnits','userSpaceOnUse')
+  .append('path').attr('d','M 40 0 L 0 0 0 40').attr('fill','none').attr('stroke','#1e293b').attr('stroke-width',0.5);
+const marker = defs.append('marker').attr('id','arrow').attr('viewBox','0 -5 10 10').attr('refX',9).attr('refY',0).attr('markerWidth',7).attr('markerHeight',7).attr('orient','auto');
+marker.append('path').attr('d','M 0 -4 L 10 0 L 0 4 Z').attr('fill','#64748b');
+
+const g = svg.append('g').attr('id','zoom');
+g.append('rect').attr('x',0).attr('y',0).attr('width',W).attr('height',H).attr('fill','url(#grid)');
+
+/* edges primero (z-order detrás) */
+const edgeSel = g.selectAll('.edge').data(edges).enter().append('g').attr('class','edge');
+edgeSel.append('path').attr('class',d=>d.cls).attr('d',d=>d.d).attr('marker-end','url(#arrow)');
+edgeSel.filter(d=>d.label).append('text')
+  .attr('x',d=>d.lx).attr('y',d=>d.ly).text(d=>d.label);
+
+/* boundaries de capa (colapsables) */
+const layerSel = g.selectAll('.layer-boundary').data(layers).enter().append('g')
+  .attr('class','layer-boundary boundary')
+  .attr('data-layer',d=>d.id);
+layerSel.append('rect')
+  .attr('x',d=>d.x).attr('y',d=>d.y).attr('width',d=>d.w).attr('height',d=>d.h)
+  .attr('rx',12).attr('fill','none').attr('stroke',d=>d.color)
+  .attr('stroke-dasharray','8 4').attr('stroke-width',1.2).attr('opacity',0.55);
+layerSel.append('text').attr('class','b-label')
+  .attr('x',d=>d.x+16).attr('y',d=>d.y+22).attr('fill',d=>d.color).text(d=>d.label);
+layerSel.append('text').attr('class','collapse').attr('x',d=>d.x+d.w-20).attr('y',d=>d.y+21)
+  .attr('text-anchor','end').text('▾ colapsar')
+  .on('click',function(ev,d){ toggleLayer(d.id); });
+
+/* grupos internos (no colapsables) */
+const groupSel = g.selectAll('.group').data(groups).enter().append('g').attr('class','boundary group');
+groupSel.append('rect')
+  .attr('x',d=>d.x).attr('y',d=>d.y).attr('width',d=>d.w).attr('height',d=>d.h)
+  .attr('rx',8).attr('fill','rgba(15,23,42,0.5)').attr('stroke',d=>d.color)
+  .attr('stroke-dasharray','4 4').attr('stroke-width',1).attr('opacity',0.7);
+groupSel.append('text').attr('class','b-label')
+  .attr('x',d=>d.x+12).attr('y',d=>d.y+18).attr('fill',d=>d.color).style('font-size','9.5px').text(d=>d.label);
+groupSel.append('text').attr('class','b-sub')
+  .attr('x',d=>d.x+12).attr('y',d=>d.y+30).text(d=>d.sub);
+
+/* nodos */
+const nodeSel = g.selectAll('.node').data(nodes.filter(n=>!n.boundary)).enter().append('g')
+  .attr('class',d=>'node '+(d.type==='legacy'?'legacy':''))
+  .attr('data-id',d=>d.id)
+  .attr('data-layer',d=>d.layer)
+  .attr('transform',d=>`translate(${d.x},${d.y})`);
+nodeSel.append('rect').attr('class','box-bg')
+  .attr('width',d=>d.w).attr('height',d=>d.h).attr('rx',6).attr('fill','#0f172a');
+nodeSel.append('rect').attr('class','box')
+  .attr('width',d=>d.w).attr('height',d=>d.h).attr('rx',6)
+  .attr('fill',d=>FILL[d.type]).attr('stroke',d=>T[d.type]).attr('stroke-width',1.5);
+nodeSel.append('text').attr('class','kind')
+  .attr('x',10).attr('y',14).text(d=>d.type==='legacy'?'LEGACY':d.type);
+nodeSel.append('text').attr('class','label')
+  .attr('x',10).attr('y',d=>d.h/2+2).text(d=>d.label);
+nodeSel.append('text').attr('class','sub')
+  .attr('x',10).attr('y',d=>d.h-10).text(d=>d.sub||'');
+
+/* interactividad */
+const tooltip = d3.select('#tooltip');
+nodeSel
+  .on('mouseenter',function(ev,d){
+    tooltip.style('display','block')
+      .style('left',(ev.clientX+14)+'px').style('top',(ev.clientY+14)+'px')
+      .html(`<div class="t-label" style="color:${T[d.type]}">${esc(d.label)}</div><div class="t-sub">${esc(d.sub||'')}</div>`);
+  })
+  .on('mousemove',function(ev){
+    tooltip.style('left',(ev.clientX+14)+'px').style('top',(ev.clientY+14)+'px');
+  })
+  .on('mouseleave',function(){ tooltip.style('display','none'); })
+  .on('click',function(ev,d){ ev.stopPropagation(); showDetail(d); });
+
+/* ── Panel de detalle ───────────────────────── */
+const aside = d3.select('#details');
+function showDetail(d){
+  aside.html(`
+    <div class="detail-head">
+      <span class="badge ${esc(d.type)}">${esc(d.type)}</span>
+      <h2>${esc(d.label)}</h2>
+      <p class="detail-sub">${esc(d.sub||'')}</p>
+    </div>
+    ${d.archivos?`<div class="detail-sec"><h4>Archivos</h4><ul>${d.archivos.map(a=>`<li><code>${esc(a)}</code></li>`).join('')}</ul></div>`:''}
+    <div class="detail-sec"><h4>Qué hace</h4><p>${esc(d.desc||'')}</p></div>
+    ${d.bullets?`<div class="detail-sec"><h4>Puntos clave</h4><ul>${d.bullets.map(b=>`<li>${esc(b)}</li>`).join('')}</ul></div>`:''}
+    ${d.conn?`<div class="detail-sec"><h4>Se conecta con</h4><p>${esc(d.conn)}</p></div>`:''}
+    <div class="detail-sec"><h4>Ubicación</h4><p>Zona <code>${esc(ZONE_NAMES[d.layer]||d.layer)}</code></p></div>
+  `);
+  aside.node().scrollTop = 0;
+  clearHighlights();
+  d3.selectAll('.node[data-id="'+d.id+'"]').classed('hit',true);
+}
+
+/* click en fondo → volver a la intro */
+svg.on('click',function(ev){
+  if(ev.target===this || ev.target.getAttribute('fill')==='url(#grid)'){
+    clearHighlights();
+    d3.select('#search').property('value','');
+    aside.html(`
+      <div class="intro">
+        <span class="badge external">INTERACTIVO</span>
+        <h2>Explora el proyecto completo</h2>
+        <p class="detail-sub">Mapa de arquitectura y código: cada caja es un componente real del repo.</p>
+        <ol>
+          <li><span class="kbd">Click</span> en cualquier caja → panel con archivos, qué hace y puntos clave</li>
+          <li><span class="kbd">Rueda</span> zoom · <span class="kbd">Arrastrar</span> para mover el mapa</li>
+          <li>Usa la <b>búsqueda</b> para ubicar archivos (ej: <code>app.py</code>, <code>song.json</code>, <code>Metronome</code>)</li>
+          <li><span class="kbd">Click</span> en "colapsar" de una zona para ocultarla</li>
+          <li>Las cajas <s>tachadas</s> son código <b>legacy sin uso</b></li>
+        </ol>
+        <div class="stats">
+          <div class="stat"><b>${nodes.filter(n=>!n.boundary).length}</b><span>cajas</span></div>
+          <div class="stat"><b>${nodes.filter(n=>!n.boundary&&n.archivos).length}</b><span>archivos</span></div>
+          <div class="stat"><b>${layers.length}</b><span>zonas</span></div>
+          <div class="stat"><b>6</b><span>canciones</span></div>
+        </div>
+      </div>`);
+  }
+});
+
+/* ── Búsqueda ───────────────────────────────── */
+function clearHighlights(){
+  d3.selectAll('.node').classed('hit',false).classed('dim',false);
+}
+d3.select('#search').on('input',function(){
+  const q = this.value.trim().toLowerCase();
+  clearHighlights();
+  if(!q) return;
+  let first=null;
+  nodeSel.each(function(d){
+    const hay = (d.label+' '+d.sub+' '+(d.archivos||[]).join(' ')+' '+(d.desc||'')).toLowerCase();
+    const hit = hay.includes(q);
+    d3.select(this).classed('hit',hit).classed('dim',!hit);
+    if(hit && !first) first=d;
+  });
+  if(first) showDetail(first);
+});
+
+/* ── Colapsar zonas ─────────────────────────── */
+function toggleLayer(layerId){
+  const layer = layers.find(l=>l.id===layerId);
+  const collapsed = layerSel.filter(d=>d.id===layerId).classed('collapsed');
+  layerSel.filter(d=>d.id===layerId).classed('collapsed',!collapsed);
+  const hidden = !collapsed;
+  // nodos y grupos de la capa
+  d3.selectAll('.node[data-layer="'+layerId+'"], .group[data-layer="'+layerId+'"]').classed('hidden',hidden);
+  // edges que tocan la capa
+  const nodeIds = new Set(nodes.filter(n=>n.layer===layerId).map(n=>n.id));
+  edgeSel.classed('hidden',d=> nodeIds.has(d.from) || nodeIds.has(d.to));
+  layerSel.filter(d=>d.id===layerId).select('.collapse').text(hidden?'▸ expandir':'▾ colapsar');
+  if(hidden){
+    layerSel.filter(d=>d.id===layerId).select('rect').attr('height',40);
+  } else {
+    layerSel.filter(d=>d.id===layerId).select('rect').attr('height',d=>d.h);
+  }
+  fit();
+}
+
+/* ── Zoom / pan ─────────────────────────────── */
+const zoom = d3.zoom().scaleExtent([0.25,4]).on('zoom',ev=>g.attr('transform',ev.transform));
+svg.call(zoom);
+function fit(){
+  const box = g.node().getBBox();
+  const cw = document.querySelector('main').clientWidth;
+  const ch = document.querySelector('main').clientHeight;
+  const s = Math.max(0.1, Math.min(cw/box.width, ch/box.height) * 0.95);
+  svg.transition().duration(350).call(
+    zoom.transform,
+    d3.zoomIdentity.translate((cw-box.width*s)/2, (ch-box.height*s)/2).scale(s)
+  );
+}
+d3.select('#zoom-in').on('click',()=>svg.transition().call(zoom.scaleBy,1.3));
+d3.select('#zoom-out').on('click',()=>svg.transition().call(zoom.scaleBy,1/1.3));
+d3.select('#zoom-fit').on('click',fit);
+d3.select('#reset').on('click',function(){
+  clearHighlights();
+  d3.select('#search').property('value','');
+  svg.node().dispatchEvent(new MouseEvent('click',{bubbles:true}));
+});
+window.addEventListener('resize',fit);
+setTimeout(fit,50);
+</script>
+</body>
+</html>
