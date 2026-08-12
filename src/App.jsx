@@ -74,6 +74,7 @@ function App() {
     checkpointStatus,
     selectSong,
     togglePlayback,
+    restartPlayback,
     seekTo,
     seekBy,
     setTargetBpm,
@@ -573,6 +574,7 @@ function App() {
         isPreparing={isPreparingPlayback}
         countIn={countIn}
         onToggle={togglePlayback}
+        onRestart={restartPlayback}
         onBackward={() => seekBy(-10)}
         onForward={() => seekBy(10)}
       />

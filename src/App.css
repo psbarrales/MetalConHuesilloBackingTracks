@@ -751,7 +751,7 @@
   transform: translateX(-50%);
   width: min(720px, calc(100% - 28px));
   display: grid;
-  grid-template-columns: 1fr 1.6fr 1fr;
+  grid-template-columns: 1fr 1fr 1.6fr 1fr;
   gap: 10px;
   padding: 10px;
   border: 1px solid rgba(255, 138, 80, 0.38);
@@ -949,7 +949,7 @@ footer code {
 
   .transport-controls {
     width: calc(100% - 20px);
-    grid-template-columns: 0.82fr 1.36fr 0.82fr;
+    grid-template-columns: 0.7fr 0.82fr 1.36fr 0.82fr;
     gap: 7px;
     padding: 8px;
   }

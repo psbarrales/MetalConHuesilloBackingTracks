@@ -656,6 +656,39 @@ export function useMultiTrackPlayer(songRepository) {
     clearInterval(syncIntervalRef.current)
   }, [])
 
+  // ─── Cuenta regresiva + arranque desde el inicio ───────────────────────────
+  const startWithCountIn = useCallback((bpm, useAudioMetronome) => {
+    const elements = audioElementsRef.current
+    isCountingInRef.current = true
+    const { delayMs, beatTimingsMs } = metronomeEngine.countIn(bpm, DEFAULT_COUNT_IN_BEATS)
+
+    const timers = []
+    beatTimingsMs.forEach((ms, i) => {
+      timers.push(setTimeout(() => setCountIn(DEFAULT_COUNT_IN_BEATS - i), ms))
+    })
+    timers.push(
+      setTimeout(async () => {
+        if (!isCountingInRef.current) return
+        isCountingInRef.current = false
+        setCountIn(null)
+
+        for (const audio of Object.values(elements)) audio.currentTime = 0
+        try {
+          await Promise.all(Object.values(elements).map((a) => a.play()))
+          if (!useAudioMetronome) {
+            metronomeEngine.start(bpm, 0)
+          }
+          startTimeTracking()
+          setIsPlaying(true)
+        } catch (err) {
+          console.error('Error al reproducir tras cuenta regresiva:', err)
+          setIsPlaying(false)
+        }
+      }, delayMs),
+    )
+    countInTimersRef.current = timers
+  }, [startTimeTracking])
+
   // ─── Acciones de transporte ────────────────────────────────────────────────
   const togglePlayback = useCallback(async () => {
     const elements = audioElementsRef.current
@@ -705,34 +738,7 @@ export function useMultiTrackPlayer(songRepository) {
 
     if (isFromStart) {
       // ── Cuenta regresiva ────────────────────────────────────────────────
-      isCountingInRef.current = true
-      const { delayMs, beatTimingsMs } = metronomeEngine.countIn(bpm, DEFAULT_COUNT_IN_BEATS)
-
-      const timers = []
-      beatTimingsMs.forEach((ms, i) => {
-        timers.push(setTimeout(() => setCountIn(DEFAULT_COUNT_IN_BEATS - i), ms))
-      })
-      timers.push(
-        setTimeout(async () => {
-          if (!isCountingInRef.current) return
-          isCountingInRef.current = false
-          setCountIn(null)
-
-          for (const audio of Object.values(elements)) audio.currentTime = 0
-          try {
-            await Promise.all(Object.values(elements).map((a) => a.play()))
-            if (!useAudioMetronome) {
-              metronomeEngine.start(bpm, 0)
-            }
-            startTimeTracking()
-            setIsPlaying(true)
-          } catch (err) {
-            console.error('Error al reproducir tras cuenta regresiva:', err)
-            setIsPlaying(false)
-          }
-        }, delayMs),
-      )
-      countInTimersRef.current = timers
+      startWithCountIn(bpm, useAudioMetronome)
     } else {
       // ── Reanuda desde posición actual ───────────────────────────────────
       for (const audio of Object.values(elements)) audio.currentTime = position
@@ -749,7 +755,60 @@ export function useMultiTrackPlayer(songRepository) {
         setIsPlaying(false)
       }
     }
-  }, [isPlaying, metronomeBpm, startTimeTracking, stopTimeTracking])
+  }, [isPlaying, metronomeBpm, startTimeTracking, startWithCountIn, stopTimeTracking])
+
+  // ─── Reiniciar: vuelve al inicio; si estaba sonando, arranca con count-in ──
+  const restartPlayback = useCallback(async () => {
+    const elements = audioElementsRef.current
+    if (!Object.keys(elements).length) return
+
+    // Cancela un count-in en curso
+    if (isCountingInRef.current) {
+      isCountingInRef.current = false
+      for (const t of countInTimersRef.current) clearTimeout(t)
+      countInTimersRef.current = []
+      setCountIn(null)
+    }
+
+    const wasPlaying = isPlayingRef.current
+
+    // Detiene todo
+    for (const audio of Object.values(elements)) audio.pause()
+    if (!useAudioMetronomeRef.current) metronomeEngine.stop()
+    stopTimeTracking()
+    setIsPlaying(false)
+    setIsPreparingPlayback(false)
+    setCountIn(null)
+
+    if (!wasPlaying) {
+      // Pausado: solo vuelve al inicio
+      seekElementsTo(0)
+      return
+    }
+
+    // Estaba sonando: prepara y arranca desde el inicio con cuenta regresiva
+    setIsPreparingPlayback(true)
+    try {
+      await Promise.all(Object.values(elements).map((audio) => waitForTrackReady(audio)))
+      if (audioGraphRef.current.context?.state === 'suspended') {
+        await audioGraphRef.current.context.resume()
+      }
+    } catch (err) {
+      console.error('No se pudo preparar la reproducción:', err)
+      setIsPreparingPlayback(false)
+      return
+    }
+    setIsPreparingPlayback(false)
+
+    const bpm = metronomeBpm
+    const useAudioMetronome = useAudioMetronomeRef.current
+    if (!useAudioMetronome) {
+      await metronomeEngine.unlock()
+    }
+
+    seekElementsTo(0)
+    startWithCountIn(bpm, useAudioMetronome)
+  }, [metronomeBpm, seekElementsTo, startWithCountIn, stopTimeTracking])
 
   const seekTo = useCallback((time) => {
     seekElementsTo(time)
@@ -1055,6 +1114,7 @@ export function useMultiTrackPlayer(songRepository) {
     checkpointStatus,
     selectSong,
     togglePlayback,
+    restartPlayback,
     seekTo,
     seekBy,
     setTargetBpm: updateTargetBpm,

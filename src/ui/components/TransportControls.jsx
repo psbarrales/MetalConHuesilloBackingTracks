@@ -1,4 +1,4 @@
-export function TransportControls({ isPlaying, isPreparing, countIn, onToggle, onBackward, onForward }) {
+export function TransportControls({ isPlaying, isPreparing, countIn, onToggle, onBackward, onForward, onRestart }) {
   const isCounting = countIn !== null
   const isBusy = isPreparing || isCounting
 
@@ -20,6 +20,14 @@ export function TransportControls({ isPlaying, isPreparing, countIn, onToggle, o
 
   return (
     <section className="transport-controls" aria-label="Controles de reproduccion">
+      <button
+        type="button"
+        onClick={onRestart}
+        disabled={isBusy}
+        title="Volver al inicio. Si está sonando, suena el count-in y arranca de nuevo"
+      >
+        ⏮ Reiniciar
+      </button>
       <button type="button" onClick={onBackward} disabled={isBusy}>
         -10s
       </button>
